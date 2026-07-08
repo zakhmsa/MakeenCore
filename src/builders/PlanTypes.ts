@@ -80,12 +80,19 @@ export interface ScheduleConfig {
      * When enabled, minor review counter resets when hifz moves to a new surah.
      */
     surahBoundedMinorReview?: boolean;
-    /** 
+    /**
      * Minor review amount in pages (15 lines = 1 page).
      * If specified, overrides lesson count for minor review.
      * Recommended: 4-5 pages for weekly review coverage.
      */
     minorReviewPagesCount?: number;
+
+    // HIJRI CALENDAR (display only)
+    /**
+     * Opt-in: attach a Hijri (Umm al-Qura) date string to every generated PlanDay.
+     * Zero-dependency (Intl). Display-only — never affects scheduling. Default: false.
+     */
+    includeHijri?: boolean;
     
     // NOTE: Stop conditions are NOT defined here to keep ScheduleConfig pure.
     // Use PlanBuilder methods (e.g., .stopWhenCompleted()) instead.

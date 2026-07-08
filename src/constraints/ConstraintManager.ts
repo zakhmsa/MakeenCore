@@ -7,6 +7,14 @@ import { WallConstraint } from './WallConstraint';
 export interface IConstraint {
     validate(sourceTrack: ITrack, allTracks: Map<number, ITrack>): boolean;
     getLimitIndex(sourceTrack: ITrack, allTracks: Map<number, ITrack>): number | null;
+
+    /**
+     * Optional LOWER bound (floor): the minimum index the source track may
+     * start from, or null if this constraint imposes no floor.
+     * The ConstraintManager aggregates floors by taking the MAX (most restrictive).
+     * Contrast with getLimitIndex, which is an upper CEILING aggregated by MIN.
+     */
+    getFloorIndex?(sourceTrack: ITrack, allTracks: Map<number, ITrack>): number | null;
 }
 
 /**
@@ -42,5 +50,24 @@ export class ConstraintManager {
             }
         }
         return found ? minBarrier : null;
+    }
+
+    /**
+     * Finds the most restrictive floor (lower bound) across all constraints.
+     * @returns Maximum floor index required, or null if no floor applies.
+     */
+    getFloorIndex(sourceTrack: ITrack, allTracks: Map<number, ITrack>): number | null {
+        let maxFloor = -1;
+        let found = false;
+
+        for (const constraint of this.constraints) {
+            if (!constraint.getFloorIndex) continue;
+            const floor = constraint.getFloorIndex(sourceTrack, allTracks);
+            if (floor !== null && floor > maxFloor) {
+                maxFloor = floor;
+                found = true;
+            }
+        }
+        return found ? maxFloor : null;
     }
 }

@@ -299,6 +299,21 @@ interface PedagogicalConstraints {
 ```
 ```
 
+### Optional Fields (v1.1.0)
+- **Request** (`CreatePlanPreviewRequestDTO`): `includeHijri?: boolean` — when true, each returned day carries a Hijri date.
+- **Response day** (`PlanDayDTO`): `hijriDate?: string` — Umm al-Qura date, present only when `includeHijri` was requested.
+- **Track config** (`MAJOR_REVIEW`): `config.horizonLines?: number` — sliding-window floor for the major review.
+
+```json
+{
+  "type": "MAJOR_REVIEW",
+  "priority": 3,
+  "amountUnit": "LINES",
+  "amountValue": 20,
+  "config": { "horizonLines": 150 }
+}
+```
+
 ### Event Metadata (appliedRules)
 Events now include `appliedRules` array showing which rules affected the step:
 ```json
@@ -441,7 +456,27 @@ interface ScheduleConfig {
   maxAyahPerDay?: number;      // Default: 10, Range: 5-20
   sequentialSurahMode?: boolean; // Default: true
   consolidationDayInterval?: number; // Default: 6, 0=disabled
+
+  // Display (v1.1.0)
+  includeHijri?: boolean;      // Attach an Umm al-Qura Hijri date to each PlanDay (display-only)
 }
+```
+
+### Major Review Horizon (v1.1.0)
+`addMajorReview(amount, start?, end?, { horizonLines })` bounds the looping review to the most recently memorized `horizonLines` lines (a sliding floor beneath the wall ceiling). Omit for the classic fixed-origin cycle.
+
+```typescript
+builder.addMajorReview(30, { surah: 1, ayah: 1 }, undefined, { horizonLines: 150 });
+```
+
+### Snapshot & Resume (v1.1.0)
+For intermittent students, persist the live state and resume from the real position instead of re-simulating from the start date:
+
+```typescript
+const snapshot: PlanSnapshot = manager.exportSnapshot(); // serializable (incl. full history)
+// ...later, rebuild the same plan at the real resume date, then:
+resumedManager.importSnapshot(snapshot);
+const nextDays = resumedManager.generatePlan();
 ```
 
 ### Preset Configurations

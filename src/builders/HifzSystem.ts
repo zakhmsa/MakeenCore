@@ -4,6 +4,7 @@ import { LinearTrack } from '../tracks/LinearTrack';
 import { WindowTrack } from '../tracks/WindowTrack';
 import { LoopingTrack } from '../tracks/LoopingTrack';
 import { WallConstraint } from '../constraints/WallConstraint';
+import { HorizonConstraint } from '../constraints/HorizonConstraint';
 import { QuranRepository } from '../core/QuranRepository';
 import { BuilderContext, LocationConfig, ScheduleConfig } from './PlanTypes';
 import { ITrack } from '../tracks/BaseTrack';
@@ -105,7 +106,8 @@ export class HifzSystem {
         amountLines: number,
         trackId: number,
         start?: LocationConfig,
-        end?: LocationConfig
+        end?: LocationConfig,
+        horizonLines?: number   // 🚀 Optional sliding-window floor (lines behind the Hifz front)
     ) {
         const repo = this.getRepo();
         let startIdx = 0;
@@ -185,6 +187,19 @@ export class HifzSystem {
                     TrackId.HIFZ,
                     true,
                     1
+                ));
+            }
+
+            // 🚀 Optional sliding-window floor: keep this major review within the
+            // most-recent `horizonLines` behind the Hifz front. Opt-in only —
+            // when horizonLines is undefined, no floor is imposed (classic behavior).
+            if (horizonLines !== undefined && horizonLines > 0 && manager.hasTrack(TrackId.HIFZ)) {
+                constraintManager.addConstraint(new HorizonConstraint(
+                    trackId,
+                    TrackId.HIFZ,
+                    horizonLines,
+                    repo,
+                    context.isReverse
                 ));
             }
         }

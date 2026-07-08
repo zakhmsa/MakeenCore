@@ -10,6 +10,8 @@ export interface CreatePlanPreviewRequestDTO {
     daysPerWeek: number;
     catchUpDay?: number;
     tracks: TrackConfigDTO[];
+    /** Opt-in: include a Hijri (Umm al-Qura) date on each returned day. */
+    includeHijri?: boolean;
 }
 
 export interface TrackConfigDTO {
@@ -39,6 +41,8 @@ export interface PlanEventDTO {
 export interface PlanDayDTO {
     dayNumber: number;
     date: string;
+    /** Hijri (Umm al-Qura) date string, present only when includeHijri was requested. */
+    hijriDate?: string;
     dayType: DayType;
     totalLoad: number;
     events: PlanEventDTO[];

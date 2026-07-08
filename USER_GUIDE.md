@@ -24,7 +24,8 @@ Every plan in MakeenCore is built using one or more **Tracks**. Each track has a
 ### 📙 Major Review (Looping Track / مراجعة كبرى)
 - **Logic:** **Looping Cycle (دورة مستمرة)**.
 - **How it works:** It cycles through everything memorized *behind* the Minor Review zone.
-- **Safety Rule:** Uses a `WallConstraint` to ensure it never overlaps with the Minor Review or Hifz tracks. When it hits the "Wall," it resets to the start location and loops again.
+- **Safety Rule (ceiling):** Uses a `WallConstraint` to ensure it never overlaps with the Minor Review or Hifz tracks. When it hits the "Wall," it resets to the start location and loops again.
+- **Horizon (optional floor):** Pass `horizonLines` to `addMajorReview(...)` (or `config.horizonLines` in the DTO) to bound how far *back* the cycle may reach. Together with the wall this forms a **sliding window** `[front − horizonLines, front]` that keeps the review on the most recently memorized material. Omit it for the classic fixed-origin cycle.
 
 ---
 
@@ -43,7 +44,30 @@ MakeenCore supports a `catchUpDay` configuration (e.g., Saturday).
 
 ---
 
-## 3. DTO & API Cheat Sheet
+## 3. Advanced Capabilities
+
+### 🪟 Major Review Horizon (sliding window)
+Bound the Major Review to the most recently memorized `N` lines instead of restarting from the origin. Builder: `addMajorReview(amount, start?, end?, { horizonLines: 150 })`. DTO: `config: { horizonLines: 150 }` on the major-review track. As memorization advances, the window slides forward with it.
+
+### 💾 Snapshot & Resume (intermittent students)
+Students often pause for weeks. Rather than re-simulating from the original start date, persist the live state and resume from the real position:
+
+```typescript
+const snapshot = manager.exportSnapshot();   // serializable (JSON) — store it yourself
+
+// When the student returns, rebuild the SAME plan at the real resume date:
+const resumed = builder.build();             // same tracks as before
+resumed.importSnapshot(snapshot);            // restore positions + FULL history
+const nextDays = resumed.generatePlan();     // continues from where they stopped
+```
+The snapshot **must** include history (it does) — the minor-review window is reconstructed from it.
+
+### 🌙 Hijri Calendar (opt-in, zero-dependency)
+Set `includeHijri: true` in the schedule (or the request DTO) to attach an Umm al-Qura Hijri string to each day (`PlanDay.hijriDate` / `PlanDayDTO.hijriDate`). Display-only; scheduling stays Gregorian. The standalone `HijriDateUtils` (`toHijri`, `toHijriISO`) is also exported.
+
+---
+
+## 4. DTO & API Cheat Sheet
 
 To generate a plan using this logic, use the `MakeenEngine` (or `EngineFacade`) with the following structure:
 
@@ -54,17 +78,18 @@ To generate a plan using this logic, use the `MakeenEngine` (or `EngineFacade`) 
   "direction": "FORWARD",
   "daysPerWeek": 5,
   "catchUpDay": 6,  // Saturday (index 6)
+  "includeHijri": true, // optional: attach a Hijri date to each returned day
   "tracks": [
     { "type": "HIFZ", "amountValue": 15, "start": { "surah": 2, "ayah": 1 } },
     { "type": "MINOR_REVIEW", "amountValue": 5 }, // 5 pages window
-    { "type": "MAJOR_REVIEW", "amountValue": 30 } // 30 lines loop
+    { "type": "MAJOR_REVIEW", "amountValue": 30, "config": { "horizonLines": 150 } } // 30 lines loop, 150-line horizon
   ]
 }
 ```
 
 ---
 
-## 4. Documentation Hierarchy
+## 5. Documentation Hierarchy
 
 To find more detailed technical information, refer to:
 - **[Planning PRD](doc/planning-engine/planning-engine-prd.md):** The mathematical rules (Ayah Integrity, Page Snapping).

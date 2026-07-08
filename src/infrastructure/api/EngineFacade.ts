@@ -32,7 +32,8 @@ export class EngineFacade {
                 daysPerWeek: request.daysPerWeek,
                 limitDays: 0, // 0 = continuous until completed
                 isReverse: request.direction === 'REVERSE',
-                catchUpDayOfWeek: request.catchUpDay
+                catchUpDayOfWeek: request.catchUpDay,
+                includeHijri: request.includeHijri
             });
 
             // Map DTO tracks into the domain builder
@@ -56,7 +57,8 @@ export class EngineFacade {
                         builder.addMajorReview(
                             track.amountValue,
                             track.start ? { surah: track.start.surah, ayah: track.start.ayah } : undefined,
-                            track.end ? { surah: track.end.surah, ayah: track.end.ayah } : undefined
+                            track.end ? { surah: track.end.surah, ayah: track.end.ayah } : undefined,
+                            track.config?.horizonLines !== undefined ? { horizonLines: track.config.horizonLines } : undefined
                         );
                         break;
                     default:
@@ -80,6 +82,7 @@ export class EngineFacade {
                     plan: plan.map(day => ({
                         dayNumber: day.dayNum,
                         date: day.date.toISOString().split('T')[0],
+                        hijriDate: day.hijriDate,
                         dayType: day.is_off ? 'OFF' : 'WORKING',
                         totalLoad: day.events.reduce((sum, ev) => sum + (ev.data.lines || 0), 0),
                         events: day.events.map(ev => {

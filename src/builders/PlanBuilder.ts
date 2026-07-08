@@ -149,10 +149,18 @@ export class PlanBuilder {
     }
 
 
-    public addMajorReview(amountLines: number, startLocation?: LocationConfig, endLocation?: LocationConfig): PlanBuilder {
+    public addMajorReview(
+        amountLines: number,
+        startLocation?: LocationConfig,
+        endLocation?: LocationConfig,
+        options?: { horizonLines?: number }   // 🚀 Optional sliding-window floor
+    ): PlanBuilder {
         // ... (Logic unchanged)
         if (this.currentMode === 'NONE') this.currentMode = 'HIFZ_ECOSYSTEM';
-        this.requests.push({ type: 'MAJOR_REVIEW', params: { amountLines, startLocation, endLocation } });
+        this.requests.push({
+            type: 'MAJOR_REVIEW',
+            params: { amountLines, startLocation, endLocation, horizonLines: options?.horizonLines }
+        });
         return this;
     }
 
@@ -184,7 +192,8 @@ export class PlanBuilder {
             maxAyahPerDay: this.scheduleConfig.maxAyahPerDay,
             sequentialSurahMode: this.scheduleConfig.sequentialSurahMode,
             strictSequentialMode: this.scheduleConfig.strictSequentialMode,
-            consolidationDayInterval: this.scheduleConfig.consolidationDayInterval
+            consolidationDayInterval: this.scheduleConfig.consolidationDayInterval,
+            includeHijri: this.scheduleConfig.includeHijri
         }, repository); // Passing the dependency
 
         const context = { isReverse: this.scheduleConfig.isReverse || false };
@@ -224,7 +233,8 @@ export class PlanBuilder {
                         req.params.amountLines,
                         majorReviewCounter++,
                         req.params.startLocation,
-                        req.params.endLocation
+                        req.params.endLocation,
+                        req.params.horizonLines
                     );
                     break;
             }

@@ -14,6 +14,10 @@ export interface ITrack {
     calculateNextStep(context: PlanContext): StepResult | StepResult[] | null;
     // 🚀 FIX: Accept simulation date to ensure history accuracy
     commitStep(step: StepResult, currentDate: Date): void;
+    /** Serializable deep copy of this track's runtime state (incl. full history). */
+    exportState(): TrackState;
+    /** Restore this track's runtime state from a snapshot (deep-copied). */
+    importState(state: TrackState): void;
 }
 
 /**
@@ -74,10 +78,29 @@ export abstract class BaseTrack implements ITrack {
         }
 
         // 🚀 NEW: Handle Completion Flag
-        // If the strategy says we are done (e.g., hit the target endIdx), 
+        // If the strategy says we are done (e.g., hit the target endIdx),
         // we lock the track state.
         if (step.flags?.includes('completed')) {
             this.state.isCompleted = true;
         }
+    }
+
+    /**
+     * Returns a deep, serializable copy of this track's runtime state.
+     * The FULL history is included on purpose — window / minor-review strategies
+     * reconstruct their output from it, so a snapshot without history would
+     * silently corrupt a resumed plan.
+     */
+    exportState(): TrackState {
+        return JSON.parse(JSON.stringify(this.state));
+    }
+
+    /**
+     * Restores runtime state from a snapshot (deep-copied to avoid aliasing).
+     * `resetIdx` (the loop origin) is intentionally NOT restored: it is derived
+     * from construction config and must match how the track was rebuilt.
+     */
+    importState(state: TrackState): void {
+        this.state = JSON.parse(JSON.stringify(state));
     }
 }

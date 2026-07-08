@@ -96,7 +96,8 @@ const days = manager.generatePlan();
     strictSequentialMode: false, // Never switch until 100% done
     consolidationDayInterval: 6, // Every Nth day = review only
     surahBoundedMinorReview: false, // Keep review in current surah
-    minorReviewPagesCount: 5    // Pages to review (15 lines = 1 page)
+    minorReviewPagesCount: 5,   // Pages to review (15 lines = 1 page)
+    includeHijri: false         // Attach an Umm al-Qura Hijri date to each day
 })
 ```
 
@@ -111,6 +112,7 @@ const days = manager.generatePlan();
 | `consolidationDayInterval` | number | 6 | Review-only day interval (0=off) |
 | `surahBoundedMinorReview` | boolean | false | Minor review stays in current surah |
 | `minorReviewPagesCount` | number | — | Review amount in pages |
+| `includeHijri` | boolean | false | Attach an Umm al-Qura Hijri date to each day (display-only) |
 
 ---
 
@@ -166,6 +168,63 @@ const manager = new PlanBuilder()
 
 ---
 
+## Advanced Features
+
+### Major Review Horizon (sliding window)
+
+By default the Major Review loops from a fixed origin up to the memorized "wall" and back. For long plans you often want it to stay on the **most recently memorized N lines** instead of always restarting from the beginning. Pass `horizonLines` to bound how far behind the Hifz front the review may reach — as memorization advances, the window slides forward with it.
+
+```typescript
+new PlanBuilder()
+    .setSchedule({ startDate: '2026-04-01', daysPerWeek: 6 })
+    .addHifz(15, { surah: 1, ayah: 1 })
+    // Major review never reaches further back than 150 lines (~10 pages) behind the front:
+    .addMajorReview(30, { surah: 1, ayah: 1 }, undefined, { horizonLines: 150 })
+    .build();
+```
+
+Via the DTO API, set it on the major-review track's `config`:
+
+```typescript
+{ type: "MAJOR_REVIEW", amountValue: 30, config: { horizonLines: 150 } }
+```
+
+Omit `horizonLines` for the classic fixed-origin cycle (fully backward compatible).
+
+### Snapshot & Resume (intermittent students)
+
+Real students pause for weeks and come back. Instead of re-simulating from the original start date, export the live track state, persist it in your own store, then resume from the real position later. The snapshot carries the **full history** (required for the minor-review window to stay correct).
+
+```typescript
+// ...after generating some days:
+const snapshot = manager.exportSnapshot();   // serializable — store it anywhere (JSON)
+
+// Later, when the student returns — rebuild the SAME plan at the real resume date:
+const resumed = new PlanBuilder()
+    .setSchedule({ startDate: '2026-06-01', daysPerWeek: 6 }) // the REAL resume date
+    .addHifz(15, { surah: 1, ayah: 1 })
+    .addMinorReview(3)
+    .build();
+resumed.importSnapshot(snapshot);            // restore positions + history
+const nextDays = resumed.generatePlan();     // continues from where the student stopped
+```
+
+### Hijri Calendar (opt-in, zero-dependency)
+
+Attach an Umm al-Qura Hijri date to every generated day — handy for Ramadan khatmah plans. It is display-only (scheduling stays Gregorian) and adds no dependencies (uses the built-in `Intl`).
+
+```typescript
+new PlanBuilder()
+    .setSchedule({ startDate: '2026-02-18', daysPerWeek: 7, includeHijri: true })
+    .addHifz(15, { surah: 1, ayah: 1 })
+    .build()
+    .generatePlan(); // each PlanDay now has hijriDate, e.g. "١ رمضان ١٤٤٧ هـ"
+```
+
+Or via the DTO API, pass `includeHijri: true` in the request; each `PlanDayDTO` then carries a `hijriDate` field. The standalone `HijriDateUtils` helper is also exported (`toHijri`, `toHijriISO`).
+
+---
+
 ## Output
 
 The engine returns daily plan entries with event categories:
@@ -201,10 +260,10 @@ if (result.success) {
 
 ```bash
 npm install
-npm run test:vitest
+npm test
 ```
 
-**Total automated tests:** 37/37 (100% Passing).
+**Total automated tests:** 63/63 (100% Passing).
 
 ---
 

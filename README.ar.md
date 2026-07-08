@@ -96,7 +96,8 @@ const days = manager.generatePlan();
     strictSequentialMode: false,   // عدم الانتقال حتى 100% إكمال
     consolidationDayInterval: 6,   // كل N يوم = مراجعة فقط
     surahBoundedMinorReview: false, // المراجعة الصغرى ضمن السورة الحالية
-    minorReviewPagesCount: 5       // عدد الصفحات للمراجعة (15 سطر = صفحة)
+    minorReviewPagesCount: 5,      // عدد الصفحات للمراجعة (15 سطر = صفحة)
+    includeHijri: false            // إرفاق تاريخ هجري (أم القرى) بكل يوم
 })
 ```
 
@@ -111,6 +112,7 @@ const days = manager.generatePlan();
 | `consolidationDayInterval` | number | 6 | فاصل أيام المراجعة فقط (0=معطل) |
 | `surahBoundedMinorReview` | boolean | false | المراجعة الصغرى ضمن السورة الحالية |
 | `minorReviewPagesCount` | number | — | مقدار المراجعة بالصفحات |
+| `includeHijri` | boolean | false | إرفاق تاريخ هجري (أم القرى) بكل يوم (للعرض فقط) |
 
 ---
 
@@ -166,6 +168,63 @@ const manager = new PlanBuilder()
 
 ---
 
+## ميزات متقدمة
+
+### أفق المراجعة الكبرى (نافذة منزلقة)
+
+افتراضياً تدور المراجعة الكبرى من نقطة بداية ثابتة حتى "جدار" المحفوظ ثم تعود. في الخطط الطويلة قد ترغب أن تبقى على **آخر N سطر محفوظة** بدل أن تعيد من البداية دائماً. مرّر `horizonLines` لتحديد أقصى مسافة يرجع إليها خلف جبهة الحفظ — ومع تقدّم الحفظ تنزلق النافذة معه.
+
+```typescript
+new PlanBuilder()
+    .setSchedule({ startDate: '2026-04-01', daysPerWeek: 6 })
+    .addHifz(15, { surah: 1, ayah: 1 })
+    // المراجعة الكبرى لا ترجع أبعد من 150 سطراً (~10 صفحات) خلف الجبهة:
+    .addMajorReview(30, { surah: 1, ayah: 1 }, undefined, { horizonLines: 150 })
+    .build();
+```
+
+وعبر واجهة الـ DTO، عيّنه في `config` لمسار المراجعة الكبرى:
+
+```typescript
+{ type: "MAJOR_REVIEW", amountValue: 30, config: { horizonLines: 150 } }
+```
+
+احذف `horizonLines` للعودة إلى الدورة الكلاسيكية بنقطة بداية ثابتة (متوافق رجعياً بالكامل).
+
+### اللقطة والاستئناف (الطالب المتقطع)
+
+كثير من الطلاب يتوقفون أسابيع ثم يعودون. بدل إعادة المحاكاة من تاريخ البداية الأصلي، صدّر حالة المسارات الحيّة، واحفظها في مخزنك الخاص، ثم استأنف من النقطة الحقيقية لاحقاً. تحمل اللقطة **التاريخ الكامل (history)** — وهو ضروري لبقاء نافذة المراجعة الصغرى صحيحة.
+
+```typescript
+// ...بعد توليد بعض الأيام:
+const snapshot = manager.exportSnapshot();   // قابلة للتسلسل — احفظها كـ JSON أينما شئت
+
+// لاحقاً عند عودة الطالب — أعد بناء نفس الخطة بتاريخ الاستئناف الحقيقي:
+const resumed = new PlanBuilder()
+    .setSchedule({ startDate: '2026-06-01', daysPerWeek: 6 }) // تاريخ الاستئناف الفعلي
+    .addHifz(15, { surah: 1, ayah: 1 })
+    .addMinorReview(3)
+    .build();
+resumed.importSnapshot(snapshot);            // استعادة المواضع + التاريخ
+const nextDays = resumed.generatePlan();     // يُكمل من حيث توقّف الطالب
+```
+
+### التقويم الهجري (اختياري، بلا اعتماديات)
+
+أرفِق تاريخاً هجرياً (أم القرى) بكل يوم مُولَّد — مفيد لخطط ختمة رمضان. هو للعرض فقط (الجدولة تبقى ميلادية) ولا يضيف أي اعتماديات (يستخدم `Intl` المدمج).
+
+```typescript
+new PlanBuilder()
+    .setSchedule({ startDate: '2026-02-18', daysPerWeek: 7, includeHijri: true })
+    .addHifz(15, { surah: 1, ayah: 1 })
+    .build()
+    .generatePlan(); // كل PlanDay أصبح لديه hijriDate، مثل "١ رمضان ١٤٤٧ هـ"
+```
+
+أو عبر واجهة الـ DTO، مرّر `includeHijri: true` في الطلب؛ عندها يحمل كل `PlanDayDTO` حقل `hijriDate`. كما تُصدَّر الأداة المستقلة `HijriDateUtils` (`toHijri`، `toHijriISO`).
+
+---
+
 ## المخرجات
 
 يُعيد المحرك إدخالات الخطة اليومية مع تصنيفات الأحداث:
@@ -201,10 +260,10 @@ if (result.success) {
 
 ```bash
 npm install
-npm run test:vitest
+npm test
 ```
 
-**إجمالي الاختبارات الآلية:** 37/37 (ناجحة بنسبة 100%).
+**إجمالي الاختبارات الآلية:** 63/63 (ناجحة بنسبة 100%).
 
 ---
 

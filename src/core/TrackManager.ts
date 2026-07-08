@@ -4,7 +4,8 @@ import { PlanContext } from './PlanContext';
 import { ConstraintManager } from '../constraints/ConstraintManager';
 import { QuranRepository } from './QuranRepository'; // Type only!
 import { DateUtils } from '../utils/DateUtils';
-import { PlanDay, PlanEvent } from './types';
+import { HijriDateUtils } from '../utils/HijriDateUtils';
+import { PlanDay, PlanEvent, PlanSnapshot } from './types';
 import { EventType } from './constants'; // Import Enum
 import { RuleEngine } from '../domain/planning/rules/RuleEngine';
 import { RuleContext, RuleCandidate } from '../domain/planning/rules/RuleInterface';
@@ -31,6 +32,7 @@ export interface ManagerConfig {
     sequentialSurahMode?: boolean;
     strictSequentialMode?: boolean;      // If true, never jump surah until 100% complete
     consolidationDayInterval?: number; // Every N days, no new hifz (only review)
+    includeHijri?: boolean;            // Opt-in: attach a Hijri (Umm al-Qura) date to each PlanDay
 }
 
 export type StopCondition = (tracks: Map<number, ITrack>) => boolean;
@@ -100,6 +102,37 @@ export class TrackManager {
     }
 
     /**
+     * Exports a serializable snapshot of every track's state (positions + full history).
+     * Persist this to resume the plan later from the real position.
+     *
+     * Typical resume flow (the consumer owns persistence & timing):
+     *   1. rebuild the manager exactly as before (same tracks) but with the real resume date,
+     *   2. call importSnapshot(savedSnapshot),
+     *   3. call generatePlan() — it continues from the restored positions.
+     */
+    exportSnapshot(): PlanSnapshot {
+        const tracks: Record<number, ReturnType<ITrack['exportState']>> = {};
+        for (const [id, track] of this.tracks) {
+            tracks[id] = track.exportState();
+        }
+        return { version: 1, tracks };
+    }
+
+    /**
+     * Restores track states from a snapshot. Only tracks that exist on this manager
+     * are restored (rebuild the same tracks first). resetIdx/config are untouched.
+     */
+    importSnapshot(snapshot: PlanSnapshot): void {
+        for (const idStr of Object.keys(snapshot.tracks)) {
+            const id = Number(idStr);
+            const track = this.tracks.get(id);
+            if (track) {
+                track.importState(snapshot.tracks[id]);
+            }
+        }
+    }
+
+    /**
      * Main simulation loop.
      */
     generatePlan(): PlanDay[] {
@@ -130,7 +163,8 @@ export class TrackManager {
                     dayNum: dayCounter,
                     date: new Date(currentDate),
                     is_off: true,
-                    events: []
+                    events: [],
+                    hijriDate: this.config.includeHijri ? HijriDateUtils.toHijri(currentDate) : undefined
                 });
                 dayCounter++;
                 currentDate = DateUtils.addDays(currentDate, 1);
@@ -156,7 +190,8 @@ export class TrackManager {
                 dayNum: dayCounter,
                 date: new Date(currentDate),
                 is_off: false,
-                events: [] // Empty event container
+                events: [], // Empty event container
+                hijriDate: this.config.includeHijri ? HijriDateUtils.toHijri(currentDate) : undefined
             };
 
             // Epic 3: Load Balancing Application

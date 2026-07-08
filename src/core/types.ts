@@ -31,6 +31,22 @@ export interface TrackState {
     extraData: Record<string, any>;
 }
 
+/**
+ * Serializable snapshot of a running plan's track states.
+ *
+ * Persist this (e.g. when a student pauses for weeks) and re-import it to resume
+ * the plan from the REAL last position — including full history — instead of
+ * re-simulating from an assumed start date. History MUST be preserved: window /
+ * minor-review strategies derive their output from it.
+ */
+export interface PlanSnapshot {
+    version: number;
+    /** Map of trackId → that track's full serializable state (incl. history). */
+    tracks: Record<number, TrackState>;
+    /** Optional ISO date of the last generated day (informational for consumers). */
+    generatedThrough?: string;
+}
+
 export interface StepResult {
     start: LocationObj;
     end: LocationObj;
@@ -70,4 +86,10 @@ export interface PlanDay {
     date: Date;
     is_off: boolean;
     events: PlanEvent[]; // 👈 المرونة هنا
+    /**
+     * Optional Hijri (Umm al-Qura) representation of `date`.
+     * Populated only when the plan is generated with `includeHijri: true`.
+     * Display-only — does not affect scheduling. See HijriDateUtils.
+     */
+    hijriDate?: string;
 }

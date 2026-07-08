@@ -5,57 +5,75 @@ import { findExponentialStopIndex } from '../utils/Algorithms';
 
 /**
  * HorizonConstraint
- * 
- * Prevents a review track from exceeding an absolute size boundary relative to a target track.
- * Example: Near Review cannot go back further than 150 lines from the Memorization front.
+ *
+ * Imposes a *floor* (lower bound) on a review track: it may not reach further
+ * back than `horizonLines` behind the target track's front (e.g. the Hifz front).
+ *
+ * Together with WallConstraint (the ceiling), this carves out a **sliding window**
+ * of the most recently memorized material:
+ *
+ *     [ front − horizonLines , front ]
+ *
+ * As the target (Hifz) advances, the floor slides forward with it, so the review
+ * keeps focusing on the most recent `horizonLines` lines instead of always
+ * restarting from a fixed origin.
+ *
+ * DIRECTION OF LIMITS — why two different methods:
+ * - WallConstraint is a CEILING  → exposed via getLimitIndex (manager aggregates by MIN).
+ * - HorizonConstraint is a FLOOR → exposed via getFloorIndex (manager aggregates by MAX).
+ *   getLimitIndex intentionally returns null so the horizon never acts as a ceiling.
+ *
+ * `horizonLines` is fully configurable (see PlanBuilder.addMajorReview options /
+ * TrackConfigDTO.config.horizonLines). When it is not supplied, no HorizonConstraint
+ * is created and the review keeps its classic fixed-origin cycling behavior.
  */
 export class HorizonConstraint implements IConstraint {
     constructor(
-        private sourceTrackId: number,       // The track being limited
-        private targetTrackId: number,       // The reference track (e.g. Hifz)
-        private horizonLines: number,        // Max allowed lines of difference
+        private sourceTrackId: number,   // The track being limited (e.g. Major Review)
+        private targetTrackId: number,   // The reference front (e.g. Hifz)
+        private horizonLines: number,    // Max allowed lines behind the front
         private quranRepo: QuranRepository,
         private isReverse: boolean
     ) {}
 
-    getLimitIndex(sourceTrack: ITrack, allTracks: Map<number, ITrack>): number | null {
+    /**
+     * Lower bound: the index sitting `horizonLines` behind the target's front.
+     * @complexity O(log n) via exponential search on the cumulative array.
+     */
+    getFloorIndex(sourceTrack: ITrack, allTracks: Map<number, ITrack>): number | null {
         if (sourceTrack.id !== this.sourceTrackId) return null;
+        if (this.horizonLines <= 0) return null;
 
         const target = allTracks.get(this.targetTrackId);
         if (!target) return null;
 
         const targetCurrentIdx = target.state.currentIdx;
-        
-        // Let's resolve what "horizon back" means.
-        // If the target has advanced 300 lines total, and horizon is 150 lines, 
-        // the baseline for our source track should never drop below the index corresponding to 150 cumulative.
-        
-        const dirData = this.quranRepo.getDirectionData(this.isReverse);
-        const cumValue = targetCurrentIdx > 0 ? dirData.cumulative_array[targetCurrentIdx - 1] : 0;
-        
-        const horizonCumValue = Math.max(0, cumValue - this.horizonLines);
 
-        // Find index that matches this cumulative value
-        const minAllowedIdx = findExponentialStopIndex(
+        const dirData = this.quranRepo.getDirectionData(this.isReverse);
+        // Cumulative lines completed up to (but not including) the front.
+        const cumValue = targetCurrentIdx > 0 ? dirData.cumulative_array[targetCurrentIdx - 1] : 0;
+
+        // Progress hasn't exceeded the window yet → no meaningful floor (review the whole thing).
+        if (cumValue <= this.horizonLines) return null;
+
+        const horizonCumValue = cumValue - this.horizonLines;
+
+        const floorIdx = findExponentialStopIndex(
             dirData.cumulative_array,
             horizonCumValue,
             0,
             dirData.cumulative_array.length - 1
         );
 
-        // This would act like a "lower" boundary wall. 
-        // ConstraintManager currently seeks the "minimum allowed index" upper barrier (a ceiling)
-        // Wait! LimitIndex in ConstraintManager is an Upper Bound (don't exceed this index).
-        // But a Horizon is a Lower Bound (must not fall behind this).
-        // Our current ConstraintManager implementation treats the limit as a CELIING (a barrier preventing forward movement).
-        // Let's make sure the review doesn't start before the horizon!
-        // Actually WindowStrategy resets when it hits the lower bound (0.0).
-        // The Horizon applies to the reset point. It's not a forward boundary, it's a backwards limit.
-        // We will just expose this value and the WindowStrategy should consume it.
+        return Math.max(0, floorIdx);
+    }
+
+    /** Horizon is a floor, not a ceiling — it intentionally imposes no upper limit. */
+    getLimitIndex(_sourceTrack: ITrack, _allTracks: Map<number, ITrack>): number | null {
         return null;
     }
 
-    validate(sourceTrack: ITrack, allTracks: Map<number, ITrack>): boolean {
+    validate(_sourceTrack: ITrack, _allTracks: Map<number, ITrack>): boolean {
         return true;
     }
 }

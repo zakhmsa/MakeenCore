@@ -17,6 +17,10 @@ export * from './core/types';
 export { TrackId, WindowMode } from './core/constants';
 export * from './errors';
 
+// 2b. Export Date Utilities (Gregorian scheduling + opt-in Hijri display)
+export { DateUtils } from './utils/DateUtils';
+export { HijriDateUtils } from './utils/HijriDateUtils';
+
 // 3. Export API Application Boundary (DTO Contracts)
 export * from './infrastructure/api/contracts';
 
