@@ -17,7 +17,7 @@ src/data/quran-uthmani-min.sql
 src/data/quran-data.js
 src/data/README.md
 
-# Docs (dev only)
+# Historical docs are dev-only; package.json explicitly includes the two current contracts.
 doc/
 
 # Generated outputs (shouldn't be in repo)

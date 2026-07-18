@@ -33,7 +33,12 @@ const result = MakeenEngine.generatePlan({
         priority: 1,
         amountUnit: "LINES",
         amountValue: 10,
-        start: { surah: 1, ayah: 1 }
+        start: { surah: 1, ayah: 1 },
+        end: { surah: 2, ayah: 50 },
+        config: {
+            maxAyahPerDay: 10,
+            surahCompletion: { enabled: true, maxOverflowLines: 2 }
+        }
     }],
     startDate: "2026-04-01"
 });
@@ -77,6 +82,7 @@ const days = manager.generatePlan();
 | **Multi-track scheduling** | Hifz (new), Minor Review (recent), Major Review (full cycle) |
 | **Canonical Quran indexing** | Directional prefix-sum calculations for any range |
 | **Pedagogical rules** | Ayah integrity, surah continuity, consolidation days |
+| **Explainable capacity** | Reports requested lines, actual lines, and overflow reason |
 | **Planning modes** | By duration ("finish in X days") or by daily amount ("Y lines/day") |
 | **Library-first design** | Pure TypeScript, no dependencies, deterministic output |
 
@@ -92,10 +98,14 @@ const days = manager.generatePlan();
     daysPerWeek: 5,              // 1-7
     isReverse: false,            // false = Al-Fatiha → An-Nas
     maxAyahPerDay: 10,           // Hard cap (5-20)
-    sequentialSurahMode: true,   // Complete surah before next
+    surahCompletion: {           // Optional, capacity-aware surah completion
+        enabled: true,
+        maxOverflowLines: 2,
+        mayExceedMaxAyahs: false
+    },
     strictSequentialMode: false, // Never switch until 100% done
     consolidationDayInterval: 6, // Every Nth day = review only
-    surahBoundedMinorReview: false, // Keep review in current surah
+    surahBoundedMinorReview: true, // Keep review in current surah (default)
     minorReviewPagesCount: 5,   // Pages to review (15 lines = 1 page)
     includeHijri: false         // Attach an Umm al-Qura Hijri date to each day
 })
@@ -107,11 +117,11 @@ const days = manager.generatePlan();
 | `daysPerWeek` | number | required | Study days per week |
 | `isReverse` | boolean | false | Direction: true = An-Nas → Al-Fatiha |
 | `maxAyahPerDay` | number | 10 | Daily memorization cap |
-| `sequentialSurahMode` | boolean | true | Complete surah before next |
+| `surahCompletion` | object | disabled | Complete a surah within an explicit line allowance |
 | `strictSequentialMode` | boolean | false | Never change surah until 100% |
-| `consolidationDayInterval` | number | 6 | Review-only day interval (0=off) |
-| `surahBoundedMinorReview` | boolean | false | Minor review stays in current surah |
-| `minorReviewPagesCount` | number | — | Review amount in pages |
+| `consolidationDayInterval` | number | disabled | Every Nth generated study day is review-only |
+| `surahBoundedMinorReview` | boolean | true | Minor review resets and stays in the active Hifz surah |
+| `minorReviewPagesCount` | number | — | Exact 15-line pages in the active surah |
 | `includeHijri` | boolean | false | Attach an Umm al-Qura Hijri date to each day (display-only) |
 
 ---
@@ -145,7 +155,7 @@ const manager = new PlanBuilder()
 ### 2. Plan By Daily Amount
 
 Provide: `from`, `to`, `dailyLines`, `daysPerWeek`  
-Engine derives: required study days, calendar `limitDays`
+Engine derives: the required generated study-day horizon using line, ayah, and consolidation constraints
 
 ```typescript
 const manager = new PlanBuilder()
@@ -186,7 +196,10 @@ new PlanBuilder()
 Via the DTO API, set it on the major-review track's `config`:
 
 ```typescript
-{ type: "MAJOR_REVIEW", amountValue: 30, config: { horizonLines: 150 } }
+{
+  type: "MAJOR_REVIEW", priority: 3, amountUnit: "LINES", amountValue: 30,
+  config: { horizonLines: 150 }
+}
 ```
 
 Omit `horizonLines` for the classic fixed-origin cycle (fully backward compatible).
@@ -233,8 +246,8 @@ The engine returns daily plan entries with event categories:
 |------------|-------------|
 | `MEMORIZATION` | New material to memorize |
 | `REVIEW` | Scheduled review events |
-| `CATCH_UP` | Overflow/adjustment events |
-| `BREAK` | Rest/consolidation days |
+
+Off days and consolidation days may have no memorization event. Hifz events also report `requestedLines`, `overflowLines`, and `overflowReason`.
 
 ```typescript
 if (result.success) {
@@ -249,10 +262,14 @@ if (result.success) {
 
 | Document | Purpose |
 |----------|---------|
+| [AI usage contract](llms.txt) | Compact source of truth for LLMs and coding agents |
+| [User Guide](USER_GUIDE.md) | Current track behavior and examples |
 | [API Contracts](doc/planning-engine/planning-engine-api-contracts.md) | TypeScript integration contracts |
-| [Planning Modes & Phases](doc/planning-engine/planning-modes-and-phases.md) | Implementation phases and milestones |
 | [Pedagogical Rules Guide](doc/planning-engine/pedagogical-rules-guide.md) | Rule behavior and configuration |
-| [PRD](doc/planning-engine/planning-engine-prd.md) | Product and architecture details |
+| [Planning Modes & Phases](doc/planning-engine/planning-modes-and-phases.md) | Execution phases, QA scenarios, milestones, and current limitations |
+| [Project Status & QA](doc/planning-engine/project-status-and-qa.en.md) | Implemented, internal, transitional, and tested areas |
+| [Documentation Audit](doc/planning-engine/documentation-audit.md) | Evidence-based classification of retained, internal, declared-only, and obsolete details |
+| [PRD](doc/planning-engine/planning-engine-prd.md) | Historical product intent; status banner identifies it as non-authoritative for current APIs |
 
 ---
 
@@ -263,7 +280,7 @@ npm install
 npm test
 ```
 
-**Total automated tests:** 63/63 (100% Passing).
+**Total automated tests:** 73/73 passing, plus 10/10 scenario validations.
 
 ---
 
@@ -271,7 +288,7 @@ npm test
 
 - Scenario launchers and Excel scripts in `/src` are for internal QA only
 - For production: consume `planDays` and handle persistence in your host application
-- Full technical details in the `/doc` folder
+- Published technical contracts are included under `/doc/planning-engine`
 
 ---
 

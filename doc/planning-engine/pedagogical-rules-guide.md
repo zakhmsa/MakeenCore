@@ -1,377 +1,260 @@
-# Pedagogical Rules Guide — Quran Planning Engine
+# MakeenCore Pedagogical Rules Guide
 
-## Overview
+This guide explains the current rule semantics and which track each rule may affect.
 
-The Quran Planning Engine now includes **pedagogical constraints** designed to optimize plans for **retention and consistency** rather than just completion speed. These constraints ensure the generated plans are human-readable, sustainable, and aligned with effective memorization practices.
+## Rule categories
 
----
+### Hard invariants
 
-## Core Pedagogical Constraints
+Hard invariants always run and cannot be bypassed by page, thematic, or surah preferences.
 
-### 1. MaxAyahPerDay — Cognitive Load Management
+- Ayah integrity: no memorization or review boundary splits an ayah.
+- `MaxAyahRule`: optional/default maximum number of new ayahs per Hifz lesson.
+- `MaxLinesRule`: final Hifz boundary selected from the configured daily line capacity.
+- Range/direction safety: movement remains inside the configured traversal range.
+- Review wall: dependent review cannot overtake memorized material.
 
-**Purpose:** Prevents cognitive overload by limiting daily memorization chunks.
+### Soft preferences
 
-**Default:** 10 ayahs  
-**Range:** 5-20 ayahs  
-**Rule Priority:** 55 (runs LAST in the pipeline)
+Soft rules can improve stopping positions but cannot enlarge a lesson past the final permitted boundary.
 
-**Behavior:**
-- Hard caps daily new memorization at the specified limit
-- Truncates lessons that would exceed the limit
-- **Exception:** SurahCompletionRule can override for small overages (≤5 ayahs to complete a surah)
+- Capacity-aware surah completion.
+- Surah-end snapping.
+- Page-end alignment.
+- Thematic stopping.
+- Balance correction.
 
-**Example:**
-```typescript
-// 10 ayah limit - will truncate
-66:1 → 66:12 = 12 ayahs → truncated to 66:10 (10 ayahs)
+These soft alignment rules apply to memorization only. Review strategies preserve their own lesson/window/cycle boundaries.
 
-// Small overage to complete surah - allowed
-58:12 → 58:22 = 11 ayahs → ALLOWED (only 5 ayahs remaining in surah)
+## Exact rule order and scope
+
+```text
+Priority 10  AyahIntegrityRule       scope: all
+Priority 18  SurahCompletionRule     scope: memorization
+Priority 20  SurahSnapRule           scope: memorization
+Priority 30  PageAlignmentRule       scope: memorization
+Priority 40  ThematicHaltingRule     scope: memorization
+Priority 50  BalanceCorrectionRule   scope: memorization
+Priority 55  MaxAyahRule             scope: memorization, hard
+Priority 60  MaxLinesRule            scope: memorization, hard/final
 ```
 
-**Presets:**
-| Preset | Value | Use Case |
-|--------|-------|----------|
-| Conservative | 5 | Beginners, elderly, busy professionals |
-| Standard | 10 | Most students (default) |
-| Intensive | 15 | Experienced memorizers |
-| Completion | 20 | Finishing remaining Quran |
+The rule engine does not stop when `approvedEnd.is_end` is true. Surah ends still pass through every remaining hard rule.
 
----
+## Daily Hifz capacity
 
-### 2. SequentialSurahMode — Context Preservation
+Given `dailyLines: 8`, the movement strategy selects the first whole-ayah boundary that reaches eight canonical lines. This produces three cases:
 
-**Purpose:** Completes the current surah before starting a new one, preventing disruptive context switching.
+### Under capacity
 
-**Default:** true  
-**Threshold:** ≤5 remaining ayahs to trigger completion
+An independent hard limit can stop first. Example: `maxAyahPerDay: 8` may stop at 3 lines when the first eight ayahs are short.
 
-**Behavior:**
-- If remaining ayahs in current surah ≤5, extend lesson to complete it
-- Prevents "surah hopping" which disrupts memorization flow
-- Maintains thematic coherence
+### At capacity
 
-**Example:**
-```typescript
-// sequentialSurahMode = true
-Day 20: 58:1 → 58:6 (6 ayahs)
-Day 21: 58:7 → 58:11 (5 ayahs) - continues surah
-Day 22: 58:12 → 58:22 (11 ayahs) - completes surah (overage allowed)
-Day 23: 57:1 → 57:7 (7 ayahs) - now starts next surah
-```
+The whole-ayah boundary is exactly eight lines. Floating-point prefix sums are normalized to two-decimal plan precision so an unnecessary ayah is not added.
 
----
+### Whole-ayah overflow
 
-### 2b. StrictSequentialMode — Surah Lock (NEW)
+If the lesson is 7.5 lines before the last ayah and 8.5 after it, the engine emits 8.5 lines with:
 
-**Purpose:** For students who get confused by ANY surah switching until 100% complete.
-
-**Default:** false  
-**Difference from sequentialSurahMode:**
-- `sequentialSurahMode`: Allows surah change if previous surah has ≤5 ayahs remaining
-- `strictSequentialMode`: **NEVER** allows surah change until 100% complete
-
-**Behavior:**
-- If calculation would cross into new surah, it stops at current surah's end
-- Forces consolidation days if maxAyahPerDay would be exceeded by completion
-- Maximum context preservation for sensitive students
-
-**Use Cases:**
-- Elderly students who get confused by switching
-- Children who need complete surah context
-- Students with strong preference for "one surah at a time"
-
-**Example:**
-```typescript
-// strictSequentialMode = true, maxAyahPerDay = 10
-// Surah 58 has 22 ayahs, you're at ayah 12
-
-Day 22 (calculated): 58:12 → would extend to 58:22 (11 ayahs)
-Day 22 (actual): 58:12 → 58:21 (10 ayahs, at limit)
-Day 23 (consolidation): Only review (surah not 100% complete)
-Day 24: 58:22 (complete surah)
-Day 25: 57:1 → Now starts next surah
-```
-
-**Configuration:**
-```typescript
+```ts
 {
-  sequentialSurahMode: true,      // Required baseline
-  strictSequentialMode: true,     // Additional strictness
-  maxAyahPerDay: 10
+  requestedLines: 8,
+  overflowLines: 0.5,
+  overflowReason: 'AYAH_INTEGRITY'
 }
 ```
 
----
+Removing the final ayah would fall below capacity. This is the only automatic line overflow.
 
-### 3. ConsolidationDayInterval — Spaced Repetition
+## Surah completion
 
-**Purpose:** Creates dedicated review-only days every N days to consolidate learning without new material.
+Surah completion is useful but optional. It is measured in lines, never a count such as “five remaining ayahs.”
 
-**Default:** 6 (every 6th day is review-only)  
-**Disable:** Set to 0
-
-**Behavior:**
-- On consolidation days, HIFZ track is suppressed
-- Only MINOR_REVIEW and MAJOR_REVIEW tracks run
-- Allows the brain to strengthen neural pathways without new input
-- Prevents burnout
-
-**Example Output:**
-```
-Day 6:  (consolidation day)
-   📘 مراجعة صغرى: ...
-   📙 مراجعة كبرى: ...
-   (no حفظ جديد)
-
-Day 7:
-   📗 حفظ جديد: ... ← resumes
-   📘 مراجعة صغرى: ...
-   📙 مراجعة كبرى: ...
-```
-
----
-
-## Rule Pipeline & Priority System
-
-Rules run in strict priority order. Each rule can modify step boundaries.
-
-```
-Priority 5:   AyahIntegrityRule       - Never split ayahs (foundation)
-Priority 18:  SurahCompletionRule     - Complete surah if ≤5 ayahs remain
-Priority 20:  SurahSnapRule           - Snap to surah end if within threshold
-Priority 30:  PageAlignmentRule       - Snap to page boundaries
-Priority 40:  ThematicHaltingRule     - Snap to hizb/juz breaks
-Priority 50:  BalanceCorrectionRule   - Adjust to target line count
-Priority 55:  MaxAyahRule             - **Hard cap** (runs LAST)
-```
-
-**Why MaxAyahRule runs last:**
-It acts as a **safety valve** that can truncate any overextensions made by earlier rules, except for small surah-completion overages (≤5 ayahs).
-
----
-
-## Step Flags System
-
-Tracks use flags to communicate their nature to the rule pipeline:
-
-| Flag | Applied By | Effect on Rules |
-|------|------------|-----------------|
-| `memorization` | LinearStrategy | Subject to MaxAyahRule |
-| `review` | WindowStrategy, LoopingStrategy | **Skips** MaxAyahRule (preserves lesson boundaries) |
-| `completed` | All strategies | Track reached its end |
-| `reset` | LoopingStrategy | Major review track reset to beginning |
-
-**Example:**
-```typescript
-// Minor review track - preserves boundaries
-flags: ['review'] → MaxAyahRule skipped
-
-// New hifz track - subject to limits
-flags: ['memorization'] → MaxAyahRule enforced
-```
-
----
-
-## API Configuration
-
-### Programmatic (TypeScript)
-
-```typescript
-import { PlanBuilder, WindowMode } from '@makeen/core';
-
-const manager = new PlanBuilder()
-  .setSchedule({
-    startDate: "2026-02-01",
-    daysPerWeek: 5,
-    isReverse: true,
-    
-    // Pedagogical constraints
-    maxAyahPerDay: 10,
-    sequentialSurahMode: true,
-    consolidationDayInterval: 6
-  })
-  .addHifz(10, { surah: 66, ayah: 1 })
-  .addMinorReview(5, WindowMode.GRADUAL)
-  .addMajorReview(15 * 20, { surah: 67, ayah: 1 })
-  .build();
-```
-
-### HTTP API
-
-```json
-{
-  "name": "My Plan",
-  "startDate": "2026-02-01",
-  "daysPerWeek": 5,
-  "pedagogical": {
-    "maxAyahPerDay": 10,
-    "sequentialSurahMode": true,
-    "consolidationDayInterval": 6
-  },
-  "tracks": [...]
+```ts
+surahCompletion: {
+  enabled: true,
+  maxOverflowLines: 2,
+  mayExceedMaxAyahs: false
 }
 ```
 
----
+Example with an eight-line capacity:
 
-## Preset Configurations
+| Raw lesson | Full surah ending | Allowance | Result |
+|---:|---:|---:|---|
+| 7.5 | 8.0 | 2 | Complete inside capacity |
+| 8.0 | 8.5 | 2 | Complete; report 0.5 overflow |
+| 8.0 | 10.0 | 2 | Complete; report 2 overflow |
+| 8.0 | 10.5 | 2 | Defer remainder to next Hifz day |
 
-### Conservative (Beginners)
-```typescript
-{
-  maxAyahPerDay: 5,
-  sequentialSurahMode: true,
-  consolidationDayInterval: 5
-}
-// Slow, steady progress with frequent consolidation days
+`mayExceedMaxAyahs: false` means `MaxAyahRule` can still truncate a proposed surah completion. Set it true only when the teacher intentionally allows both exceptions.
+
+Legacy `sequentialSurahMode: true` enables surah completion with the default line allowance. New code should use the structured object.
+
+## Strict sequential mode
+
+`strictSequentialMode: true` prevents a raw lesson from starting the next surah in the same event. It stops at the current surah end, then starts the next surah on the next Hifz day. It does not suspend hard caps or force a large overage.
+
+## Minor-review rules
+
+Minor review and Hifz use different rules.
+
+### Review wall
+
+The wall answers: “Has this material been memorized?” A dependent review track cannot move beyond the Hifz/minor-review front.
+
+### Surah-bounded minor review
+
+This answers a different question: “Does recent review belong to the surah currently being memorized?” Material can be fully memorized and still be excluded after Hifz starts a new surah.
+
+Current default behavior:
+
+1. Read today's actual Hifz end to determine the active surah.
+2. Exclude today's lesson from review.
+3. Intersect prior Hifz history with the active surah.
+4. Clear prior-surah content when Hifz begins the new surah.
+5. Clip a cross-surah Hifz lesson at the active surah boundary.
+
+Set `surahBoundedMinorReview: false` only for legacy cross-surah recent review.
+
+### Minor-review amount
+
+- Without `minorReviewPagesCount`, the window uses completed lesson count.
+- With `minorReviewPagesCount`, `N` pages means `N * 15` canonical lines.
+- The oldest included ayah stays whole.
+- The window never crosses the active surah boundary.
+
+## Major and independent review
+
+Major review uses `LoopingStrategy`, not memorization alignment rules.
+
+- Each track has an independent pointer and reset state.
+- An explicit end is an independent cycle boundary.
+- Without an explicit end, a wall binds it to memorized progress.
+- On reaching the wall/end, the event is flagged `reset`; the next cycle begins at the configured start.
+- `horizonLines` adds a sliding floor so only recent memorized material remains in the cycle.
+
+Multiple calls to `addMajorReview` create multiple independent review counters, including review-only plans.
+
+## Consolidation and catch-up
+
+These are schedule-level behaviors, not Quran boundary rules.
+
+- `consolidationDayInterval: N`: every Nth generated study day suppresses Hifz while review continues.
+- A zero load-balancer allowance suppresses a track completely; it must not emit a one-ayah event.
+- Holidays produce off days with no events.
+
+## Explainability fields
+
+Hifz events expose the configured amount, actual amount, and any exception:
+
+```ts
+event.data = {
+  start,
+  end,
+  lines,
+  requestedLines,
+  overflowLines,
+  overflowReason,
+  appliedRules
+};
 ```
 
-### Standard (Most Students)
-```typescript
-{
-  maxAyahPerDay: 10,
-  sequentialSurahMode: true,
-  consolidationDayInterval: 6
-}
-// Balanced approach (default)
-```
+Consumers should display or preserve these fields when teachers need to audit why a lesson exceeded the nominal line capacity.
 
-### Intensive (Experienced)
-```typescript
-{
-  maxAyahPerDay: 15,
-  sequentialSurahMode: false,
-  consolidationDayInterval: 0
-}
-// Faster pace, no mandatory consolidation
-```
+## Tested Quran regions
 
-### Completion Mode
-```typescript
-{
-  maxAyahPerDay: 20,
-  sequentialSurahMode: true,
-  consolidationDayInterval: 7
-}
-// For students finishing remaining Quran
-```
+Automated acceptance coverage includes:
 
-### Strict Sequential Mode
-```typescript
-{
-  maxAyahPerDay: 10,
-  sequentialSurahMode: true,
-  strictSequentialMode: true,
-  consolidationDayInterval: 6
-}
-// For students sensitive to surah switching
-```
+- long-surah forward planning,
+- short-surah reverse planning,
+- mixed boundaries between adjacent surahs,
+- long boundary ayahs,
+- exact floating-point line boundaries,
+- configurable surah-completion allowances,
+- max-ayah interaction,
+- minor-review reset on surah change,
+- exact 15-line review pages,
+- consolidation and independent review resets.
 
----
+## Rule-by-rule purpose
 
-## Rule-Level Control (Advanced)
+### `AyahIntegrityRule`
 
-For fine-grained control, create a custom RuleEngine:
+Purpose: preserve the indivisible Quran unit. It applies to every track and normalizes a proposed boundary to a complete ayah. The normal line overflow caused by the last indivisible ayah is reported as `AYAH_INTEGRITY`; it is not permission to append additional ayahs.
 
-```typescript
-import { 
-  RuleEngine, 
-  MaxAyahRule, 
-  SurahCompletionRule,
-  AyahIntegrityRule,
-  SurahSnapRule,
-  PageAlignmentRule,
-  ThematicHaltingRule,
-  BalanceCorrectionRule
-} from '@makeen/core';
+### `SurahCompletionRule`
 
-const engine = new RuleEngine([
-  new AyahIntegrityRule(),
-  new SurahCompletionRule({ maxRemainingAyahs: 3 }), // Stricter: only 3 ayahs
-  new SurahSnapRule(),
-  new PageAlignmentRule(),
-  new ThematicHaltingRule(),
-  new BalanceCorrectionRule(),
-  new MaxAyahRule({ maxAyah: 8 })  // Override default
-]);
-```
+Purpose: avoid leaving a very small remainder at the end of the active Hifz surah when the teacher enables that preference. It is Hifz-only, measures the proposed full ending in lines, and grants an explicit overflow allowance for later hard rules to inspect. It cannot silently exempt the lesson from `MaxAyahRule`.
 
----
+### `SurahSnapRule`
 
-## Pedagogical Harmony
+Purpose: prefer a clean surah boundary when the current candidate already reaches one safely. It is an alignment preference, not a command to consume an arbitrary remainder.
 
-These constraints work **together**, not in isolation:
+### `PageAlignmentRule`
 
-1. **MaxAyahRule** sets the baseline limit
-2. **SurahCompletionRule** allows small overages to finish surahs
-3. **SequentialSurahMode** prevents context switching
-4. **Consolidation days** provide spaced repetition without new input
+Purpose: improve a nearby Hifz stopping point at a page boundary. It does not apply to review and cannot move past the current surah end or survive the final capacity rules if the adjustment is too large.
 
-**Example Day 22:**
-```
-Input: 58:12 → target 10 ayahs → would end at 58:21
-SurahCompletionRule: "Only 1 ayah remaining (58:22)" → extend to 58:22
-MaxAyahRule: "11 ayahs > 10 limit" → BUT ≤5 to complete, so ALLOWED
-Result: 58:12 → 58:22 (11 ayahs) ✓
-```
+### `ThematicHaltingRule`
 
-This is **intentional** — completing a surah is more important than strict adherence to the 10-ayah limit.
+Purpose: prefer canonical thematic break metadata when available near the candidate. It is Hifz-only. The presence of a thematic marker never overrides range, line, or ayah safety.
 
----
+### `BalanceCorrectionRule`
 
-## Validation & Error Handling
+Purpose: avoid pedagogically awkward small tails when a safe local correction exists. Like other soft alignment rules, its proposal is provisional until final hard limits run.
 
-- `maxAyahPerDay` must be 5-20 (enforced)
-- `consolidationDayInterval` 0 = disabled, otherwise positive integer
-- Invalid values fall back to defaults with console warning
+### `MaxAyahRule`
 
----
+Purpose: cap cognitive item count independently from mushaf lines. It normally truncates at `maxAyahPerDay`. The only explicit exception is a granted surah completion with `mayExceedMaxAyahs: true`.
 
-## Migration from Legacy Mode
+### `MaxLinesRule`
 
-Previous versions used only line-based calculation. To maintain backward compatibility:
+Purpose: run last and enforce the configured Hifz line boundary while keeping the final ayah whole. It preserves only a valid explicit surah-completion allowance; otherwise any earlier multi-ayah enlargement is removed.
 
-```typescript
-// Legacy mode (line-based only)
-const legacy = new PlanBuilder()
-  .setSchedule({
-    // Don't set pedagogical constraints
-    // Falls back to pure line-based planning
-  })
-  .addHifz(10, location);
+## Step flags and metadata
 
-// Pedagogical mode (recommended)
-const modern = new PlanBuilder()
-  .setSchedule({
-    maxAyahPerDay: 10,
-    sequentialSurahMode: true,
-    consolidationDayInterval: 6
-  })
-  .addHifz(10, location);
-```
+Strategies attach flags before rules execute:
 
----
+- `memorization`: identifies a Hifz step.
+- `review`: excludes the step from memorization-only rules.
+- `completed`: the configured track end was reached.
+- `reset`: a looping review reached its wall/end and will restart.
 
-## Future Enhancements
+Rules may add metadata describing applied rules or an overflow grant. Flags control execution behavior; public consumers should primarily use final event fields such as `appliedRules`, `overflowReason`, and review `is_reset`.
 
-Planned additions to the pedagogical system:
+## Recommended teacher starting points
 
-1. **Difficulty-Aware Splitting** — Longer ayahs count as more "cognitive units"
-2. **Performance Tracking** — Adaptive difficulty based on student history
-3. **Makki/Madani Weighting** — Different difficulty profiles for Meccan/Medinan surahs
-4. **Student Age Profiles** — Presets for children vs adults vs elderly
+These objects are examples, not named runtime presets:
 
----
+| Profile | Ayah cap | Completion allowance | Consolidation |
+|---|---:|---:|---:|
+| Beginner/conservative | 5 | 1 line | every 5th study day |
+| Standard | 10 | 2 lines | every 6th study day |
+| Intensive | 15 | disabled unless chosen by teacher | disabled or locally configured |
+| Finishing a range | teacher-selected | 1–2 lines, ayah exception off by default | every 7th study day |
 
-## Summary
+Student ability, verse length, existing memorization, and teaching method must override these illustrative values.
 
-| Constraint | Default | Range | Purpose |
-|------------|---------|-------|---------|
-| maxAyahPerDay | 10 | 5-20 | Prevent cognitive overload |
-| sequentialSurahMode | true | boolean | Prevent context switching |
-| strictSequentialMode | false | boolean | Never jump until 100% complete |
-| consolidationDayInterval | 6 | 0+ | Spaced repetition days |
+## Validation and migration
 
-These features transform the engine from "optimized for completion" to **"optimized for retention and consistency"** — achieving a Gold Standard Quran Planner.
+- `maxAyahPerDay` should be positive; planning-mode `daysPerWeek` must be 1–7.
+- A range must be valid in the selected direction.
+- `dailyLines`, duration, and track amounts must be positive.
+- New integrations should replace `sequentialSurahMode: true` with an explicit `surahCompletion` object.
+- Legacy cross-surah minor review must now be requested with `surahBoundedMinorReview: false`.
+- Code that previously treated `maxAyahPerDay` as advisory must expect it to be a hard cap.
+- Do not import internal rule classes from the npm root. The stable customization surface is `ScheduleConfig`.
+
+## Pedagogical interaction summary
+
+The rules answer different questions and therefore should not be collapsed into one generic maximum:
+
+- Line capacity: how much new mushaf material is assigned today?
+- Ayah cap: how many distinct cognitive units are assigned today?
+- Surah completion: is a small remainder worth an explicitly bounded exception?
+- Minor-review wall: has this material already been memorized?
+- Minor-review surah bound: does this recent material belong to the currently active surah?
+- Consolidation/catch-up: should new Hifz advance on this date at all?
+
+This separation is why surah completion is useful without being allowed to create 12-, 15-, or 21-line lessons from an eight-line configuration.

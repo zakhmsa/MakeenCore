@@ -1,0 +1,182 @@
+# MakeenCore
+
+> Deterministic TypeScript library for Quran memorization and review planning using canonical whole-ayah mushaf line coordinates.
+
+Use the npm package `@zakhm_sa/makeen-core`. This file is the compact, AI-oriented source of truth for selecting the correct public API and interpreting its output. Do not infer behavior from old scenario files or internal rule classes.
+
+## Public entry points
+
+- `MakeenEngine`: DTO-oriented facade. Best for ordinary application integrations.
+- `PlanBuilder`: fluent API. Best for advanced Hifz, minor review, multiple independent review cycles, snapshots, and manual plan horizons.
+- `QuranRepository`: canonical location, line, page, and direction queries.
+- `WindowMode`: `GRADUAL` or `FIXED` minor-review behavior.
+- `HijriDateUtils`: display-only Umm al-Qura formatting.
+- Public DTOs, builder types, plan types, and errors are exported from the package root.
+
+## Install
+
+```bash
+npm install @zakhm_sa/makeen-core
+```
+
+## Recommended Builder example
+
+```ts
+import { PlanBuilder, WindowMode } from '@zakhm_sa/makeen-core';
+
+const manager = new PlanBuilder()
+  .setSchedule({
+    startDate: '2026-07-18',
+    daysPerWeek: 5,
+    isReverse: true,
+    maxAyahPerDay: 8,
+    surahCompletion: {
+      enabled: true,
+      maxOverflowLines: 2,
+      mayExceedMaxAyahs: false
+    },
+    consolidationDayInterval: 6,
+    surahBoundedMinorReview: true,
+    minorReviewPagesCount: 5,
+    includeHijri: true
+  })
+  .planByDailyAmount({
+    from: { surah: 89, ayah: 1 },
+    to: { surah: 59, ayah: 11 },
+    dailyLines: 8
+  })
+  .addMinorReview(5, WindowMode.GRADUAL)
+  .addMajorReview(30, { surah: 114, ayah: 1 })
+  .stopWhenCompleted()
+  .build();
+
+const days = manager.generatePlan();
+```
+
+## Daily-line semantics
+
+- `dailyLines` is the configured daily capacity for new memorization.
+- The engine always returns whole ayahs.
+- A lesson can exceed the capacity only because the final indivisible ayah crosses it, or because an explicitly enabled surah-completion allowance applies.
+- Soft surah, page, and thematic alignment cannot bypass final ayah and line constraints.
+- `maxAyahPerDay` is an additional hard cap. Short ayahs can therefore produce fewer lines than requested.
+- Output fields explain the result: `requestedLines`, `overflowLines`, and `overflowReason` (`AYAH_INTEGRITY` or `SURAH_COMPLETION`).
+
+## Surah completion
+
+```ts
+surahCompletion: {
+  enabled: true,
+  maxOverflowLines: 2,
+  mayExceedMaxAyahs: false
+}
+```
+
+- The allowance is measured in mushaf lines, not remaining ayah count.
+- If the remaining surah portion is too large, it moves to the next memorization day.
+- `mayExceedMaxAyahs` must be explicitly enabled to override the ayah cap.
+- Legacy `sequentialSurahMode` remains accepted for compatibility; prefer `surahCompletion` in new code.
+
+## Minor review
+
+- Minor review is Hifz-history based and never includes today's lesson.
+- It is surah-bounded by default: once Hifz actually starts a new surah, the prior-surah minor window is cleared.
+- Set `surahBoundedMinorReview: false` only for legacy cross-surah behavior.
+- `minorReviewPagesCount: N` means an exact target of `N * 15` mushaf lines, rounded only to preserve a whole boundary ayah.
+- `GRADUAL` grows from completed in-plan lessons. `FIXED` may use pre-plan material when the legacy unbounded window is selected.
+
+## Independent review cycles
+
+Call `addMajorReview` more than once. Each call creates an independent looping counter with its own amount, start, end, and reset state.
+
+```ts
+const reviewOnly = new PlanBuilder()
+  .setSchedule({ startDate: '2026-07-18', daysPerWeek: 5, limitDays: 60, isReverse: true })
+  .addMajorReview(75, { surah: 114, ayah: 1 }, { surah: 67, ayah: 30 })
+  .addMajorReview(150, { surah: 78, ayah: 1 }, { surah: 67, ayah: 30 })
+  .build()
+  .generatePlan();
+```
+
+With an explicit `end`, the cycle is independent of Hifz and resets automatically at that boundary. For review-only plans, set `limitDays` or `endDate`; there is no Hifz completion event to stop an indefinite schedule.
+
+## DTO facade example
+
+```ts
+import { MakeenEngine } from '@zakhm_sa/makeen-core';
+
+const result = MakeenEngine.generatePlan({
+  name: 'Student plan',
+  startDate: '2026-07-18',
+  direction: 'REVERSE',
+  daysPerWeek: 5,
+  holidays: ['2026-08-01'],
+  includeHijri: true,
+  tracks: [
+    {
+      type: 'HIFZ',
+      priority: 1,
+      amountUnit: 'LINES',
+      amountValue: 8,
+      start: { surah: 89, ayah: 1 },
+      end: { surah: 59, ayah: 11 },
+      config: {
+        maxAyahPerDay: 8,
+        surahCompletion: { enabled: true, maxOverflowLines: 2, mayExceedMaxAyahs: false },
+        consolidationDayInterval: 6
+      }
+    },
+    {
+      type: 'MINOR_REVIEW',
+      priority: 2,
+      amountUnit: 'PAGES',
+      amountValue: 5,
+      config: { mode: 'GRADUAL', surahBounded: true }
+    }
+  ]
+});
+```
+
+For `HIFZ` and `MAJOR_REVIEW`, `amountUnit: 'PAGES'` is converted to 15 lines per page. A minor-review `PAGES` amount configures its recent-history window.
+
+## Direction and ranges
+
+- `isReverse: false` / `direction: 'FORWARD'`: Al-Fatiha toward An-Nas.
+- `isReverse: true` / `direction: 'REVERSE'`: An-Nas toward Al-Fatiha.
+- The `from` and `to` locations must follow the selected traversal order.
+- All rule boundaries and limits use traversal indexes and work in both directions.
+
+## Output interpretation
+
+- `PlanDay.events` contains `MEMORIZATION` and `REVIEW` events; off days can have no events.
+- `data.lines` / DTO `linesCount` is the actual canonical line amount.
+- `data.appliedRules` identifies rules that adjusted the boundary.
+- Major-review events can carry `is_reset` when a cycle wraps.
+- `hijriDate` is display-only and does not affect scheduling.
+
+## Important invariants
+
+1. Never split an ayah.
+2. Never let review move beyond its configured wall or explicit range.
+3. Never let a soft alignment rule bypass hard line or ayah constraints.
+4. Never include today's Hifz lesson in minor review.
+5. Preserve full track history in snapshots; minor review depends on it.
+6. Rebuild the same track topology before importing a snapshot.
+
+## Documentation
+
+- [README](./README.md): installation and common examples.
+- [Arabic README](./README.ar.md): Arabic quick start and configuration.
+- [User guide](./USER_GUIDE.md): track behavior and use-case guidance.
+- [Actual API contracts](./doc/planning-engine/planning-engine-api-contracts.md): public DTO and builder shapes.
+- [Pedagogical rules](./doc/planning-engine/pedagogical-rules-guide.md): rule scopes, limits, and examples.
+- [Planning modes and phases](./doc/planning-engine/planning-modes-and-phases.md): execution, scenario tooling, milestones, and limitations.
+- [Documentation audit](./doc/planning-engine/documentation-audit.md): classification of public, internal, declared-only, historical, and obsolete claims.
+
+## Do not assume
+
+- Do not treat `dailyLines` as a desired average that soft rules may freely exceed.
+- Do not interpret `maxAyahPerDay` as a line limit.
+- Do not apply memorization alignment rules to review tracks.
+- Do not use internal scenario presets as public API contracts.
+- Do not import internal rule classes from the npm root; configure behavior through `ScheduleConfig`.

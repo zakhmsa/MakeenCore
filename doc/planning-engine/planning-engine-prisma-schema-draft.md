@@ -1,5 +1,7 @@
 # Prisma Schema Draft — Quran Planning Engine
 
+> **Status:** Non-runtime persistence draft. MakeenCore is storage-agnostic and publishes no Prisma or HTTP contract. Use the public API contracts for library integration.
+
 ## Purpose
 Draft the persistence model needed for the next generation planning engine.
 

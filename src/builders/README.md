@@ -21,7 +21,7 @@
 // User calls in ANY order:
 builder
   .addMajorReview(75)    // ← Depends on Minor
-  .addHifz(15)           // ← Foundation
+  .addHifz(15, { surah: 1, ayah: 1 }) // ← Foundation
   .addMinorReview(2)     // ← Depends on Hifz
 
 // Builder SORTS internally before execution:
@@ -45,7 +45,7 @@ It's the "subcontractor" that handles low-level wiring, so `PlanBuilder` stays c
 
 ## Mode Protection
 ```typescript
-builder.addHifz(15);      // ← Locks to HIFZ_ECOSYSTEM
+builder.addHifz(15, { surah: 1, ayah: 1 }); // ← Locks to HIFZ_ECOSYSTEM
 builder.addWerd(5);       // ⛔ ERROR: Can't mix Hifz with Werd
 ```
 

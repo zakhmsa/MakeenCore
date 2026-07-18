@@ -1,546 +1,401 @@
-# API Contracts — Quran Planning Engine
+# MakeenCore Public API Contracts
 
-## Purpose
-Define backend-facing request and response contracts for the planning engine.
+This document describes the current npm library `@zakhm_sa/makeen-core`. It does not define HTTP endpoints, persistence, exports, controllers, or database behavior. Those belong to the consuming application.
 
-These contracts are intended for a future NestJS service layer.
+## Package exports
 
----
+The package root exports:
 
-## 0. Pedagogical Configuration API (NEW)
+- `MakeenEngine` (`EngineFacade` implementation)
+- `PlanBuilder`, `TrackManager`
+- `QuranRepository`, `QuranRepositoryOptimized`, `QuranDataBinary`
+- `TrackId`, `WindowMode`
+- builder configuration types, core plan types, DTO contracts, and errors
+- `DateUtils`, `HijriDateUtils`
 
-### Purpose
-Pedagogical constraints optimize plans for **retention and consistency** rather than just completion speed. These constraints work in harmony with existing rules.
+Internal rule classes are not a supported npm-root API. Configure them through `ScheduleConfig`.
 
-### Configuration Schema
-```json
-{
-  "pedagogical": {
-    "maxAyahPerDay": 10,           // Hard cap on daily memorization (default: 10)
-    "sequentialSurahMode": true,    // Complete surah before jumping (default: true)
-    "consolidationDayInterval": 6   // Every N days = review only (default: 6)
-  }
+## Builder contracts
+
+```ts
+interface LocationConfig {
+  surah: number;
+  ayah: number;
 }
-```
 
-### Field Descriptions
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `maxAyahPerDay` | number | 10 | Maximum new ayahs per day. Prevents cognitive overload. Range: 5-20 |
-| `sequentialSurahMode` | boolean | true | If true, completes current surah before starting next (≤5 remaining ayahs) |
-| `consolidationDayInterval` | number | 6 | Every Nth day has **no new memorization** - only review tracks run |
-
-### Rule Pipeline & Flags
-
-The engine uses a **rule pipeline** to process each step. Rules run in priority order and can modify step boundaries.
-
-#### Current Rule Order (by priority)
-```
-1. AyahIntegrityRule     (priority 5)  - Never split ayahs
-2. SurahCompletionRule   (priority 18) - Complete surah if ≤5 ayahs remain
-3. SurahSnapRule         (priority 20) - Snap to surah end if within threshold
-4. PageAlignmentRule     (priority 30) - Snap to page boundaries
-5. ThematicHaltingRule   (priority 40) - Snap to thematic breaks (hizb/juz)
-6. BalanceCorrectionRule (priority 50) - Adjust to target line count
-7. MaxAyahRule           (priority 55) - Final ayah-limit correction within the full rule pipeline
-```
-
-#### Interpretation Note
-
-`maxAyahPerDay` should be interpreted within the complete rule pipeline.
-
-If an earlier rule preserves a stronger invariant required by engine design, a naive standalone reading of raw ayah count may not fully explain the final boundary. QA should therefore evaluate final steps in the context of the ordered rule set rather than treating `MaxAyahRule` as an isolated metric.
-
-#### Step Flags
-Tracks mark steps with flags for rule pipeline awareness:
-- `flags: ['memorization']` - New Hifz steps (subject to MaxAyahRule)
-- `flags: ['review']` - Review steps (skip MaxAyahRule, preserve lesson boundaries)
-- `flags: ['completed']` - Track reached end
-- `flags: ['reset']` - Major review track reset to beginning
-
-### Example: Full Configuration
-```json
-{
-  "name": "Gold Standard Plan",
-  "startDate": "2026-03-01",
-  "direction": "REVERSE",
-  "daysPerWeek": 5,
-  "catchUpDay": 6,
-  "pedagogical": {
-    "maxAyahPerDay": 8,              // Conservative: 8 ayahs/day max
-    "sequentialSurahMode": true,    // Complete each surah fully
-    "strictSequentialMode": false,  // Allow small overages to complete surah
-    "consolidationDayInterval": 5   // Every 5th day: review only
-  },
-  "tracks": [
-    {
-      "type": "HIFZ",
-      "priority": 1,
-      "amountUnit": "LINES",
-      "amountValue": 7.5,
-      "start": { "surah": 66, "ayah": 1 },
-      "end": { "surah": 1, "ayah": 1 }
-    },
-    {
-      "type": "MINOR_REVIEW",
-      "priority": 2,
-      "amountUnit": "LESSONS",
-      "amountValue": 5,
-      "config": { "mode": "GRADUAL" }
-    },
-    {
-      "type": "MAJOR_REVIEW",
-      "priority": 3,
-      "amountUnit": "LINES",
-      "amountValue": 20
-    }
-  ]
+interface SurahCompletionConfig {
+  enabled: boolean;
+  maxOverflowLines?: number;       // default when enabled: 2
+  mayExceedMaxAyahs?: boolean;     // default: false
 }
-```
 
----
-
-## 1. Create Plan Preview
-
-### Endpoint
-`POST /api/plans/preview`
-
-### Request
-```json
-{
-  "name": "Ramadan Plan",
-  "startDate": "2026-03-01",
-  "direction": "FORWARD",
-  "daysPerWeek": 5,
-  "catchUpDay": 6,
-  "pedagogical": {
-    "maxAyahPerDay": 10,
-    "sequentialSurahMode": true,
-    "consolidationDayInterval": 6
-  },
-  "tracks": [
-    {
-      "type": "HIFZ",
-      "priority": 1,
-      "amountUnit": "LINES",
-      "amountValue": 7.5,
-      "start": { "surah": 1, "ayah": 1 },
-      "end": { "surah": 2, "ayah": 286 }
-    },
-    {
-      "type": "MINOR_REVIEW",
-      "priority": 2,
-      "amountUnit": "LESSONS",
-      "amountValue": 5,
-      "config": {
-        "mode": "GRADUAL"
-      }
-    }
-  ]
-}
-```
-
-### Response
-```json
-{
-  "success": true,
-  "data": {
-    "estimatedCompletionDate": "2026-06-18",
-    "totalDays": 110,
-    "plan": [
-      {
-        "dayNumber": 1,
-        "date": "2026-03-01",
-        "dayType": "WORKING",
-        "totalLoad": 12.5,
-        "events": [
-          {
-            "trackType": "HIFZ",
-            "eventType": "MEMORIZATION",
-            "start": { "surah": 1, "ayah": 1 },
-            "end": { "surah": 1, "ayah": 7 },
-            "linesCount": 7.5,
-            "appliedRules": ["AyahIntegrityRule", "PageAlignmentRule"]
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
----
-
-## 2. Generate Final Plan
-
-### Endpoint
-`POST /api/plans`
-
-### Request
-Same shape as preview, but with optional persistence fields.
-
-### Response
-```json
-{
-  "success": true,
-  "data": {
-    "planId": "plan_xxx",
-    "status": "DRAFT",
-    "shareCode": null
-  }
-}
-```
-
----
-
-## 3. Estimate Completion Date
-
-### Endpoint
-`POST /api/plans/estimate`
-
-### Request
-```json
-{
-  "startDate": "2026-03-01",
-  "daysPerWeek": 5,
-  "direction": "FORWARD",
-  "tracks": []
-}
-```
-
-### Response
-```json
-{
-  "success": true,
-  "data": {
-    "estimatedCompletionDate": "2026-06-18",
-    "estimatedDays": 110
-  }
-}
-```
-
----
-
-## 4. Export Plan
-
-### Endpoint
-`GET /api/plans/:id/export?format=excel`
-
-or
-
-`GET /api/plans/:id/export?format=pdf`
-
-### Response
-- binary file stream
-- appropriate content type
-
-Expected content types:
-
-- `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
-- `application/pdf`
-
----
-
-## 5. Validate Dataset
-
-### Endpoint
-`POST /api/dataset/validate`
-
-### Response
-```json
-{
-  "success": true,
-  "data": {
-    "valid": true,
-    "checks": [
-      { "name": "ayah_continuity", "passed": true },
-      { "name": "page_totals", "passed": true },
-      { "name": "thematic_boundaries", "passed": true }
-    ]
-  }
-}
-```
-
----
-
-## Shared DTO Rules
-
-### PlanDirection
-- `FORWARD`
-- `REVERSE`
-
-### TrackType
-- `HIFZ`
-- `MINOR_REVIEW`
-- `MAJOR_REVIEW`
-- `STABILIZATION`
-- `CUSTOM`
-
-### DayType
-- `WORKING`
-- `OFF`
-- `CATCH_UP`
-
-### EventType
-- `MEMORIZATION`
-- `REVIEW`
-- `BREAK`
-- `CATCH_UP`
-
-### PedagogicalConstraints (NEW)
-```typescript
-interface PedagogicalConstraints {
-  maxAyahPerDay: number;           // 5-20, default: 10
-  sequentialSurahMode: boolean;      // default: true
-  strictSequentialMode: boolean;     // default: false - never jump until 100% complete
-  consolidationDayInterval: number; // 0=disabled, default: 6
-}
-```
-```
-
-### Optional Fields (v1.1.0)
-- **Request** (`CreatePlanPreviewRequestDTO`): `includeHijri?: boolean` — when true, each returned day carries a Hijri date.
-- **Response day** (`PlanDayDTO`): `hijriDate?: string` — Umm al-Qura date, present only when `includeHijri` was requested.
-- **Track config** (`MAJOR_REVIEW`): `config.horizonLines?: number` — sliding-window floor for the major review.
-
-```json
-{
-  "type": "MAJOR_REVIEW",
-  "priority": 3,
-  "amountUnit": "LINES",
-  "amountValue": 20,
-  "config": { "horizonLines": 150 }
-}
-```
-
-### Event Metadata (appliedRules)
-Events now include `appliedRules` array showing which rules affected the step:
-```json
-{
-  "appliedRules": [
-    "AyahIntegrityRule",
-    "SurahCompletionRule",
-    "MaxAyahRule"
-  ]
-}
-```
-
-### Step Flags (Internal)
-Used by strategies to mark step types:
-- `memorization` - New Hifz step (subject to MaxAyahRule)
-- `review` - Review step (skips MaxAyahRule)
-- `completed` - Track reached end
-- `reset` - Major review track reset
-
----
-
-## Validation Rules
-
-- `startDate` must be ISO date format
-- `daysPerWeek` must be 1-7
-- track amounts must be positive
-- location coordinates must be valid Quran references
-- review tracks must not exceed the planned memorization horizon
-- export format must be one of supported values
-
----
-
-## 6. Programmatic API (TypeScript/NPM)
-
-For direct library usage without HTTP API:
-
-### Installation
-```bash
-npm install makeencore
-```
-
-### Quick Start
-```typescript
-import { PlanBuilder, WindowMode } from 'makeencore';
-
-const builder = new PlanBuilder();
-
-const manager = builder
-  .setSchedule({
-    startDate: "2026-02-01",
-    daysPerWeek: 5,
-    isReverse: true,
-    // Pedagogical constraints
-    maxAyahPerDay: 10,
-    sequentialSurahMode: true,
-    consolidationDayInterval: 6
-  })
-  .planByDuration({
-    from: { surah: 66, ayah: 1 },
-    to: { surah: 58, ayah: 8 },
-    durationDays: 30
-  })
-  .addMinorReview(5, WindowMode.GRADUAL)
-  .addMajorReview(15 * 20, { surah: 67, ayah: 1 })
-  .stopWhenCompleted()
-  .build();
-
-const plan = manager.generatePlan();
-```
-
-### Official Builder Planning Modes
-
- `PlanBuilder` now supports two official hifz-planning entry points.
-
- #### `planByDuration(...)`
-
- Use when the caller knows the target Quran range and the available duration.
-
- ```typescript
- const manager = new PlanBuilder()
-   .setSchedule({
-     startDate: '2026-02-01',
-     daysPerWeek: 5,
-     isReverse: true,
-     maxAyahPerDay: 5,
-     sequentialSurahMode: true,
-     strictSequentialMode: true,
-     consolidationDayInterval: 5
-   })
-   .planByDuration({
-     from: { surah: 66, ayah: 1 },
-     to: { surah: 58, ayah: 8 },
-     durationDays: 30
-   })
-   .build();
- ```
-
- This mode derives:
-
- - daily hifz amount in lines
- - matching plan limit in calendar days
-
- #### `planByDailyAmount(...)`
-
- Use when the caller knows the target Quran range and the desired daily amount.
-
- ```typescript
- const manager = new PlanBuilder()
-   .setSchedule({
-     startDate: '2026-02-01',
-     daysPerWeek: 6,
-     isReverse: true,
-     maxAyahPerDay: 12,
-     sequentialSurahMode: true,
-     strictSequentialMode: false,
-     consolidationDayInterval: 7
-   })
-   .planByDailyAmount({
-     from: { surah: 66, ayah: 1 },
-     to: { surah: 55, ayah: 78 },
-     dailyLines: 14
-   })
-   .build();
- ```
-
- This mode derives:
-
- - required study days
- - matching plan limit in calendar days
-
-### ScheduleConfig Interface
-```typescript
 interface ScheduleConfig {
-  startDate: string;           // ISO date (YYYY-MM-DD)
-  daysPerWeek: number;         // 1-7
-  limitDays?: number;          // Optional manual cap; planning modes may derive it automatically
-  isReverse?: boolean;         // true=from end, false=from start
-  
-  // Pedagogical Constraints (NEW)
-  maxAyahPerDay?: number;      // Default: 10, Range: 5-20
-  sequentialSurahMode?: boolean; // Default: true
-  consolidationDayInterval?: number; // Default: 6, 0=disabled
+  startDate: string;
+  daysPerWeek: number;
+  limitDays?: number;
+  endDate?: string;
+  isReverse?: boolean;
+  catchUpDayOfWeek?: number;
+  holidays?: string[];
 
-  // Display (v1.1.0)
-  includeHijri?: boolean;      // Attach an Umm al-Qura Hijri date to each PlanDay (display-only)
+  maxAyahPerDay?: number;          // engine default: 10
+  surahCompletion?: SurahCompletionConfig;
+  sequentialSurahMode?: boolean;   // legacy compatibility alias
+  strictSequentialMode?: boolean;
+  consolidationDayInterval?: number;
+
+  surahBoundedMinorReview?: boolean; // default: true
+  minorReviewPagesCount?: number;    // 15 lines per page
+  includeHijri?: boolean;
+}
+
+interface CompletionByDailyAmountConfig {
+  from: LocationConfig;
+  to: LocationConfig;
+  dailyLines: number;
+}
+
+interface CompletionByDurationConfig {
+  from: LocationConfig;
+  to: LocationConfig;
+  durationDays: number;
 }
 ```
 
-### Major Review Horizon (v1.1.0)
-`addMajorReview(amount, start?, end?, { horizonLines })` bounds the looping review to the most recently memorized `horizonLines` lines (a sliding floor beneath the wall ceiling). Omit for the classic fixed-origin cycle.
+### PlanBuilder methods
 
-```typescript
-builder.addMajorReview(30, { surah: 1, ayah: 1 }, undefined, { horizonLines: 150 });
+```ts
+new PlanBuilder()
+  .setSchedule(schedule)
+  .planByDailyAmount({ from, to, dailyLines })
+  // OR .planByDuration({ from, to, durationDays })
+  // OR .addHifz(amountLines, start, end?)
+  .addMinorReview(lessonCount, WindowMode.GRADUAL)
+  .addMajorReview(amountLines, start?, end?, { horizonLines }?)
+  .stopWhenCompleted()
+  .build(); // TrackManager
 ```
 
-### Snapshot & Resume (v1.1.0)
-For intermittent students, persist the live state and resume from the real position instead of re-simulating from the start date:
+Call `addMajorReview` multiple times for multiple independent counters. An explicit `end` makes a review loop independent of Hifz. Without an explicit end, wall constraints bind it to memorized material.
 
-```typescript
-const snapshot: PlanSnapshot = manager.exportSnapshot(); // serializable (incl. full history)
-// ...later, rebuild the same plan at the real resume date, then:
-resumedManager.importSnapshot(snapshot);
-const nextDays = resumedManager.generatePlan();
+## Plan output
+
+```ts
+interface PlanDay {
+  dayNum: number;
+  date: Date;
+  is_off: boolean;
+  hijriDate?: string;
+  events: PlanEvent[];
+}
+
+interface PlanEvent {
+  trackId: number;
+  trackName: string;
+  eventType: EventType;
+  data: {
+    start: LocationObj;
+    end: LocationObj;
+    lines?: number;
+    requestedLines?: number;
+    overflowLines?: number;
+    overflowReason?: 'AYAH_INTEGRITY' | 'SURAH_COMPLETION';
+    appliedRules?: string[];
+    is_reset?: boolean;
+  };
+}
 ```
 
-### Preset Configurations
-```typescript
-// Conservative (beginners, elderly)
-const conservative = {
-  maxAyahPerDay: 5,
-  sequentialSurahMode: true,
-  consolidationDayInterval: 5
-};
+`lines` is actual canonical mushaf load. `requestedLines` is present for Hifz. An overflow is valid only for the final whole ayah or configured surah completion.
 
-// Standard (most students)
-const standard = {
-  maxAyahPerDay: 10,
-  sequentialSurahMode: true,
-  consolidationDayInterval: 6
-};
+## Facade request DTO
 
-// Intensive (experienced memorizers)
-const intensive = {
-  maxAyahPerDay: 15,
-  sequentialSurahMode: false,
-  consolidationDayInterval: 0  // No consolidation days
-};
+```ts
+type PlanDirection = 'FORWARD' | 'REVERSE';
+type TrackType = 'HIFZ' | 'MINOR_REVIEW' | 'MAJOR_REVIEW' | 'STABILIZATION' | 'CUSTOM';
 
-// Hifdh completion (finishing remaining Quran)
-const completionMode = {
-  maxAyahPerDay: 20,
-  sequentialSurahMode: true,
-  consolidationDayInterval: 7
-};
+interface CreatePlanPreviewRequestDTO {
+  name: string;
+  startDate: string;
+  direction: PlanDirection;
+  daysPerWeek: number;
+  catchUpDay?: number;
+  holidays?: string[];
+  includeHijri?: boolean;
+  tracks: TrackConfigDTO[];
+}
+
+interface TrackConfigDTO {
+  type: TrackType;
+  priority: number;
+  amountUnit: 'LINES' | 'PAGES' | 'LESSONS' | 'CUSTOM';
+  amountValue: number;
+  start?: LocationDTO;
+  end?: LocationDTO;
+  config?: Record<string, unknown>;
+}
 ```
 
-### Rule-Level Control (Advanced)
-For fine-grained control, you can configure individual rules:
+`HIFZ` requires `start`. `STABILIZATION` and `CUSTOM` are contract values but are not executed by the current facade.
 
-```typescript
-import { RuleEngine, MaxAyahRule, SurahCompletionRule } from 'makeencore';
+### Facade configuration mapping
 
-// Custom rule engine with modified priorities
-const engine = new RuleEngine([
-  new AyahIntegrityRule(),
-  new SurahCompletionRule({ maxRemainingAyahs: 3 }), // Stricter: only 3 ayahs to complete
-  new SurahSnapRule(),
-  new PageAlignmentRule(),
-  new ThematicHaltingRule(),
-  new BalanceCorrectionRule(),
-  new MaxAyahRule({ maxAyah: 8 })  // Override default 10
-]);
+Hifz track `config` supports:
+
+```ts
+{
+  maxAyahPerDay?: number;
+  sequentialSurahMode?: boolean; // legacy
+  strictSequentialMode?: boolean;
+  surahCompletion?: {
+    enabled: boolean;
+    maxOverflowLines?: number;
+    mayExceedMaxAyahs?: boolean;
+  };
+  consolidationDayInterval?: number;
+}
 ```
 
----
+Minor-review track `config` supports:
 
-## Notes for NestJS Integration
+```ts
+{
+  mode?: 'GRADUAL' | 'FIXED';
+  surahBounded?: boolean; // default true
+  pagesCount?: number;
+}
+```
 
-Recommended controller split:
+If the minor-review track uses `amountUnit: 'PAGES'`, `amountValue` becomes its page window and overrides `config.pagesCount`.
 
-- `PlansController`
-- `ExportsController`
-- `DatasetController`
+Major-review track `config` supports:
 
-Recommended service split:
+```ts
+{ horizonLines?: number }
+```
 
-- `PlanPreviewService`
-- `PlanGenerationService`
-- `PlanExportService`
-- `DatasetValidationService`
+`PAGES` is converted at 15 lines per page for Hifz and major review.
+
+### Complete facade example
+
+```ts
+import { MakeenEngine } from '@zakhm_sa/makeen-core';
+
+const response = MakeenEngine.generatePlan({
+  name: 'Gold plan',
+  startDate: '2026-07-18',
+  direction: 'REVERSE',
+  daysPerWeek: 5,
+  includeHijri: true,
+  tracks: [
+    {
+      type: 'HIFZ',
+      priority: 1,
+      amountUnit: 'LINES',
+      amountValue: 8,
+      start: { surah: 89, ayah: 1 },
+      end: { surah: 59, ayah: 11 },
+      config: {
+        maxAyahPerDay: 8,
+        surahCompletion: {
+          enabled: true,
+          maxOverflowLines: 2,
+          mayExceedMaxAyahs: false
+        },
+        consolidationDayInterval: 6
+      }
+    },
+    {
+      type: 'MINOR_REVIEW',
+      priority: 2,
+      amountUnit: 'PAGES',
+      amountValue: 5,
+      config: { mode: 'GRADUAL', surahBounded: true }
+    },
+    {
+      type: 'MAJOR_REVIEW',
+      priority: 3,
+      amountUnit: 'LINES',
+      amountValue: 30,
+      start: { surah: 114, ayah: 1 },
+      config: { horizonLines: 150 }
+    }
+  ]
+});
+```
+
+## Facade response DTO
+
+```ts
+interface CreatePlanPreviewResponseDTO {
+  success: boolean;
+  data: {
+    estimatedCompletionDate: string;
+    totalDays: number;
+    plan: PlanDayDTO[];
+  };
+}
+
+interface PlanEventDTO {
+  trackType: TrackType;
+  eventType: EventType;
+  start: LocationDTO;
+  end: LocationDTO;
+  linesCount: number;
+  appliedRules?: string[];
+  requestedLines?: number;
+  overflowLines?: number;
+  overflowReason?: 'AYAH_INTEGRITY' | 'SURAH_COMPLETION';
+}
+```
+
+## Rule pipeline contract
+
+Rules are scoped. Memorization-only rules never run on review events.
+
+```text
+AyahIntegrityRule       priority 10  all tracks
+SurahCompletionRule     priority 18  memorization only
+SurahSnapRule           priority 20  memorization only
+PageAlignmentRule       priority 30  memorization only
+ThematicHaltingRule     priority 40  memorization only
+BalanceCorrectionRule   priority 50  memorization only
+MaxAyahRule             priority 55  memorization hard cap
+MaxLinesRule            priority 60  memorization final line boundary
+```
+
+The pipeline does not stop at a surah end. Hard rules always execute.
+
+## Snapshot contract
+
+`TrackManager.exportSnapshot()` returns versioned track state including full history. Rebuild identical tracks before `importSnapshot(snapshot)`. The library owns no persistence.
+
+## Errors and validation
+
+- Locations must exist in the canonical dataset.
+- The selected `from`/`to` order must match direction.
+- Daily lines, duration, and track amounts must be positive.
+- `daysPerWeek` must be 1–7 in planning modes.
+- The facade returns `success: false` for caught execution errors; the builder can throw typed `PlanError` instances.
+
+## Facade operations
+
+The root export `MakeenEngine` currently implements exactly three static operations:
+
+| Operation | Input | Output | Notes |
+|---|---|---|---|
+| `generatePlan` | `CreatePlanPreviewRequestDTO` | `CreatePlanPreviewResponseDTO` | Executes the complete plan and returns daily events. |
+| `estimateTimeline` | `EstimateCompletionRequestDTO` | `EstimateCompletionResponseDTO` | Currently delegates to full generation, then returns date/day totals. It is not yet a lightweight estimator. |
+| `validateDataset` | no argument | `DatasetValidationResponseDTO` | Checks forward/reverse indexes, symmetry, and the 6,236-ayah boundary count. |
+
+There is no `generateFinalPlan`, persistence, activation, sharing, or file-export method on `MakeenEngine`.
+
+## Exported transport contracts without an executor
+
+The package exports the following shapes because host applications may use them at their own application boundary:
+
+```ts
+interface GenerateFinalPlanRequestDTO extends CreatePlanPreviewRequestDTO {
+  presetId?: string;
+}
+
+interface GenerateFinalPlanResponseDTO {
+  success: boolean;
+  data: {
+    planId: string;
+    status: ''DRAFT'' | ''ACTIVE'' | ''PAUSED'' | ''COMPLETED'' | ''ARCHIVED'';
+    shareCode: string | null;
+  };
+}
+
+interface ExportRequestDTO {
+  planId: string;
+  format: ''excel'' | ''pdf'';
+  includeTeachersNotes?: boolean;
+}
+```
+
+These are declared contracts, not evidence that MakeenCore owns a database, HTTP endpoint, finalization workflow, or downloadable-file response. `GeneratePreview*` and `FinalizePlan*` are backward-compatible type aliases.
+
+## Other public root exports
+
+### Quran repositories
+
+- `QuranRepository`: canonical singleton queries used by the engine.
+- `QuranRepositoryOptimized`: optimized repository implementation.
+- `QuranDataBinary`: bundled Quran data access.
+
+Use repository methods for valid location/index conversion and line calculations; do not recreate Quran line arithmetic from exported plan averages.
+
+### Date utilities
+
+- `DateUtils`: Gregorian scheduling helpers.
+- `HijriDateUtils`: Umm al-Qura display formatting.
+
+Hijri values are presentation metadata and never participate in scheduling decisions.
+
+### TrackManager
+
+`PlanBuilder.build()` returns a `TrackManager`. Important public operations are:
+
+```ts
+manager.generatePlan();
+manager.exportSnapshot();
+manager.importSnapshot(snapshot);
+manager.getTrack(trackId);
+manager.hasTrack(trackId);
+```
+
+Direct manager construction and track manipulation are advanced APIs. Prefer `PlanBuilder` so dependency order, walls, and strategy selection are assembled consistently.
+
+### Enums and errors
+
+- `TrackId`: built-in Hifz/minor/major identifiers.
+- `WindowMode`: `GRADUAL` or `FIXED`.
+- `PlanError`, `PlanErrorCode`, `Severity`: typed builder/domain failures.
+
+## DTO value boundaries
+
+Some union values are broader than the current facade implementation:
+
+- `TrackType` declares `STABILIZATION` and `CUSTOM`, but `generatePlan` currently ignores unsupported track types after warning.
+- `DayType` declares `CATCH_UP`, but facade mapping currently emits `WORKING` or `OFF`; catch-up behavior is observable as suppressed Hifz rather than a mapped catch-up day value.
+- `EventType` declares `BREAK` and `CATCH_UP`, while current facade event mapping emits memorization or review events.
+- `priority` is required in each `TrackConfigDTO`, but facade composition uses track type order; callers should still provide semantic priorities `1`, `2`, and `3`.
+
+Consumers must not infer implemented runtime branches solely from the breadth of these exported unions.
+
+## Minor-review mode contract
+
+```ts
+builder.addMinorReview(5, WindowMode.GRADUAL);
+builder.addMinorReview(5, WindowMode.FIXED);
+```
+
+- `GRADUAL` grows from completed history and excludes today.
+- `FIXED` targets the requested lesson count from day one.
+- `ScheduleConfig.minorReviewPagesCount` overrides the lesson count with `pages * 15` lines.
+- `surahBoundedMinorReview` defaults to `true`; with this strategy both modes remain inside the active Hifz surah.
+
+## Major-review constraint contract
+
+`addMajorReview(amount, start?, end?, { horizonLines? })` composes several behaviors:
+
+- An explicit `end` forms an independent cycle.
+- Without an explicit `end`, `WallConstraint` supplies the upper boundary from dependent progress.
+- `horizonLines` supplies a moving lower boundary behind the Hifz front.
+- A loop reaching its boundary records reset state and resumes from its configured origin.
+
+Each call creates a distinct track ID and independent counter.
+
+## Host application and NestJS boundary
+
+A host may expose routes such as preview, finalize, export, or dataset validation, but MakeenCore does not register those routes. A typical host split is:
+
+- preview service: calls `MakeenEngine.generatePlan`,
+- timeline service: calls `MakeenEngine.estimateTimeline`,
+- dataset service: calls `MakeenEngine.validateDataset`,
+- persistence/finalization service: stores plans and implements state transitions,
+- export service: maps plan data into the host''s chosen Excel/PDF response.
+
+This preserves the useful integration architecture from earlier documents without falsely presenting proposed URLs as library endpoints.

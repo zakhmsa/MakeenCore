@@ -19,6 +19,8 @@
     "README.md",
     "README.ar.md",
     "USER_GUIDE.md",
+    "llms.txt",
+    "doc/planning-engine",
     "LICENSE"
   ],
   "engines": {
@@ -61,6 +63,7 @@
   "keywords": [
     "quran",
     "memorization",
+    "llms.txt",
     "hifz",
     "planning",
     "mushaf",

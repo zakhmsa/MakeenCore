@@ -95,3 +95,11 @@ startIdx = estimated backward via lesson-size approximation
            using the first plan lesson as anchor
 ```
 If no pre-plan material exists (plan started at direction beginning) → degrades gracefully to `GRADUAL`.
+
+### SurahBoundedWindowStrategy (default Minor Review)
+
+- Uses completed Hifz history and excludes today's lesson.
+- Resets to the active Hifz surah when Hifz actually begins a new surah.
+- Clips cross-surah lessons to the active surah.
+- When pages are configured, uses exact `pages * 15` canonical lines rather than treating one page as one lesson.
+- Select the legacy `WindowStrategy` with `surahBoundedMinorReview: false`.

@@ -33,7 +33,12 @@ const result = MakeenEngine.generatePlan({
         priority: 1,
         amountUnit: "LINES",
         amountValue: 10,
-        start: { surah: 1, ayah: 1 }
+        start: { surah: 1, ayah: 1 },
+        end: { surah: 2, ayah: 50 },
+        config: {
+            maxAyahPerDay: 10,
+            surahCompletion: { enabled: true, maxOverflowLines: 2 }
+        }
     }],
     startDate: "2026-04-01"
 });
@@ -77,6 +82,7 @@ const days = manager.generatePlan();
 | **جدولة متعددة المسارات** | حفظ (جديد)، مراجعة صغرى (حديث)، مراجعة كبرى (دورة كاملة) |
 | **فهرسة قرآنية دقيقة** | حسابات التجمع التراكمي (prefix-sum) لأي مدى |
 | **قواعد تربوية** | سلامة الآيات، استمرارية السور، أيام التقوية |
+| **سعة قابلة للتفسير** | إظهار الأسطر المطلوبة والفعلية وسبب التجاوز |
 | **أوضاع التخطيط** | بالمدة ("أنهِ في X يوماً") أو بالمقدار اليومي ("Y سطر/يوم") |
 | **تصميم مكتبة أولاً** | TypeScript نقية، بدون تبعيات، مخرجات قطعية |
 
@@ -92,10 +98,14 @@ const days = manager.generatePlan();
     daysPerWeek: 5,                // 1-7
     isReverse: false,              // false = الفاتحة → الناس
     maxAyahPerDay: 10,             // الحد الأقصى (5-20)
-    sequentialSurahMode: true,     // إكمال السورة قبل التالية
+    surahCompletion: {             // إكمال اختياري ضمن سماح واضح بالأسطر
+        enabled: true,
+        maxOverflowLines: 2,
+        mayExceedMaxAyahs: false
+    },
     strictSequentialMode: false,   // عدم الانتقال حتى 100% إكمال
     consolidationDayInterval: 6,   // كل N يوم = مراجعة فقط
-    surahBoundedMinorReview: false, // المراجعة الصغرى ضمن السورة الحالية
+    surahBoundedMinorReview: true,  // المراجعة الصغرى ضمن السورة الحالية (الافتراضي)
     minorReviewPagesCount: 5,      // عدد الصفحات للمراجعة (15 سطر = صفحة)
     includeHijri: false            // إرفاق تاريخ هجري (أم القرى) بكل يوم
 })
@@ -107,11 +117,11 @@ const days = manager.generatePlan();
 | `daysPerWeek` | number | مطلوب | أيام الدراسة في الأسبوع |
 | `isReverse` | boolean | false | الاتجاه: true = الناس → الفاتحة |
 | `maxAyahPerDay` | number | 10 | الحد الأقصى للحفظ اليومي |
-| `sequentialSurahMode` | boolean | true | إكمال السورة قبل البدء بالتالية |
+| `surahCompletion` | object | معطل | إكمال السورة ضمن سماح يحدده المعلم بالأسطر |
 | `strictSequentialMode` | boolean | false | عدم تغيير السورة حتى 100% إكمال |
-| `consolidationDayInterval` | number | 6 | فاصل أيام المراجعة فقط (0=معطل) |
-| `surahBoundedMinorReview` | boolean | false | المراجعة الصغرى ضمن السورة الحالية |
-| `minorReviewPagesCount` | number | — | مقدار المراجعة بالصفحات |
+| `consolidationDayInterval` | number | معطل | كل يوم دراسة مولّد رقم N يكون للمراجعة فقط |
+| `surahBoundedMinorReview` | boolean | true | تصفير المراجعة الصغرى وحصرها في سورة الحفظ الحالية |
+| `minorReviewPagesCount` | number | — | مقدار دقيق بصفحات ذات 15 سطرًا داخل السورة الحالية |
 | `includeHijri` | boolean | false | إرفاق تاريخ هجري (أم القرى) بكل يوم (للعرض فقط) |
 
 ---
@@ -145,7 +155,7 @@ const manager = new PlanBuilder()
 ### 2. التخطيط بالمقدار اليومي
 
 تُقدم: `from`، `to`، `dailyLines`، `daysPerWeek`  
-المحرك يُنتج: عدد أيام الدراسة المطلوبة، `limitDays`
+المحرك يُنتج: أفق أيام الدراسة اعتمادًا على حدّي الأسطر والآيات وأيام التجميع
 
 ```typescript
 const manager = new PlanBuilder()
@@ -186,7 +196,10 @@ new PlanBuilder()
 وعبر واجهة الـ DTO، عيّنه في `config` لمسار المراجعة الكبرى:
 
 ```typescript
-{ type: "MAJOR_REVIEW", amountValue: 30, config: { horizonLines: 150 } }
+{
+  type: "MAJOR_REVIEW", priority: 3, amountUnit: "LINES", amountValue: 30,
+  config: { horizonLines: 150 }
+}
 ```
 
 احذف `horizonLines` للعودة إلى الدورة الكلاسيكية بنقطة بداية ثابتة (متوافق رجعياً بالكامل).
@@ -233,8 +246,8 @@ new PlanBuilder()
 |-----------|-------|
 | `MEMORIZATION` | المادة الجديدة للحفظ |
 | `REVIEW` | أحداث المراجعة المجدولة |
-| `CATCH_UP` | أحداث التجاوز/التعديل |
-| `BREAK` | أيام الراحة/التقوية |
+
+قد تخلو أيام الإجازة أو التجميع من حدث حفظ. وتعرض أحداث الحفظ أيضًا `requestedLines` و`overflowLines` و`overflowReason`.
 
 ```typescript
 if (result.success) {
@@ -249,10 +262,14 @@ if (result.success) {
 
 | المستند | الغرض |
 |---------|-------|
+| [عقد الاستخدام للذكاء الاصطناعي](llms.txt) | مصدر حقيقة مختصر للنماذج والوكلاء |
+| [دليل المستخدم](USER_GUIDE.md) | السلوك الحالي للمسارات والأمثلة |
 | [عقود الربط البرمجي](doc/planning-engine/planning-engine-api-contracts.md) | عقود التكامل مع TypeScript |
-| [أوضاع التخطيط والمراحل](doc/planning-engine/planning-modes-and-phases.md) | مراحل التنفيذ والمعالم |
 | [دليل القواعد التربوية](doc/planning-engine/pedagogical-rules-guide.md) | سلوك القواعد والإعدادات |
-| [وثيقة المتطلبات (PRD)](doc/planning-engine/planning-engine-prd.md) | تفاصيل المنتج والمعمارية |
+| [أوضاع التخطيط والمراحل](doc/planning-engine/planning-modes-and-phases.md) | مراحل التنفيذ وسيناريوهات QA والمعالم والقيود الحالية |
+| [حالة المشروع والاختبارات](doc/planning-engine/project-status-and-qa.ar.md) | ما هو منفذ وداخلي وانتقالي ومختبر |
+| [تدقيق التوثيق](doc/planning-engine/documentation-audit.md) | تصنيف مدعوم بالأدلة للتفاصيل العامة والداخلية والمعلنة والقديمة |
+| [وثيقة المتطلبات](doc/planning-engine/planning-engine-prd.md) | نية المنتج التاريخية؛ يوضح التنبيه أنها ليست عقد API حاليًا |
 
 ---
 
@@ -263,7 +280,7 @@ npm install
 npm test
 ```
 
-**إجمالي الاختبارات الآلية:** 63/63 (ناجحة بنسبة 100%).
+**إجمالي الاختبارات الآلية:** 73/73 ناجحة، إضافة إلى 10/10 سيناريوهات تحقق.
 
 ---
 
@@ -271,7 +288,7 @@ npm test
 
 - مشغلات السيناريوهات وبرامج Excel في `/src` للاختبار الداخلي فقط
 - للإنتاج: استخدم `planDays` وقم بالحفظ في تطبيقك المضيف
-- التفاصيل التقنية الكاملة في مجلد `/doc`
+- عقود الاستخدام التقنية المنشورة موجودة تحت `/doc/planning-engine`
 
 ---
 

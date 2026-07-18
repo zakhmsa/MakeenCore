@@ -1,277 +1,148 @@
-# Planning Modes & Phases
+# Planning Modes and Execution Phases
 
-## Purpose
+This is a current architecture note. For consumer-facing contracts use `USER_GUIDE.md`, `llms.txt`, and `planning-engine-api-contracts.md`.
 
-This document tracks the current implementation state of the planning engine, the official planning modes now available in the builder, the scenario strategy used for QA, and the next milestones required to mature the engine further.
+## Execution phases
 
----
+1. `PlanBuilder` validates and records track requests.
+2. Requests are sorted Hifz → minor review → major/independent review.
+3. Movement strategies select raw whole-ayah steps.
+4. The scoped rule pipeline adjusts memorization boundaries.
+5. Hard `MaxAyahRule` and `MaxLinesRule` run last.
+6. The step is committed before dependent review tracks calculate.
+7. The manager emits `PlanDay.events` and advances to the next working day.
 
-## Current Rule Pipeline
+Review events do not run memorization alignment rules.
 
-The engine currently applies rules in the following order:
+## Plan by daily amount
 
-```text
-AyahIntegrityRule
-SurahCompletionRule
-SurahSnapRule
-PageAlignmentRule
-ThematicHaltingRule
-BalanceCorrectionRule
-MaxAyahRule
+```ts
+builder.planByDailyAmount({ from, to, dailyLines: 8 });
 ```
 
-## Important Interpretation
+The builder partitions the exact canonical range using both the line capacity and `maxAyahPerDay`. It then adds generated study-day slots required by `consolidationDayInterval`. `TrackManager.limitDays` counts generated study days; skipped weekdays are not counted as plan entries.
 
-Rule order is intentional.
+## Plan by duration
 
-This means a later rule is not always allowed to fully override a previous pedagogical or structural correction if the engine design expects earlier rules to preserve a stronger invariant.
-
-Examples of stronger invariants include:
-
-- ayah integrity
-- surah completion near the end of a surah
-- page or thematic stopping improvements
-
-As a result, `maxAyahPerDay` should be interpreted in context of the rule pipeline, not as a naive standalone metric during QA.
-
----
-
-## Official Planning Modes
-
-The engine now exposes two official planning modes in `PlanBuilder`.
-
-### 1. `planByDuration(...)`
-
-Use this when the teacher knows:
-
-- the Quran range to cover
-- the total duration available
-- the working days per week
-
-The engine derives:
-
-- a daily hifz amount in `lines`
-- a matching `limitDays`
-
-### Input Shape
-
-```typescript
-.planByDuration({
-  from: { surah: 66, ayah: 1 },
-  to: { surah: 58, ayah: 8 },
-  durationDays: 30
-})
+```ts
+builder.planByDuration({ from, to, durationDays: 90 });
 ```
 
-### Output Behavior
+The builder derives a daily line amount from total canonical lines and available study days. Because hard ayah caps and consolidation days can reduce actual progress, callers must choose compatible duration constraints.
 
-The builder computes:
+## Direct Hifz mode
 
-- total lines between `from` and `to`
-- approximate study days from `durationDays` and `daysPerWeek`
-- derived daily lines required to finish in time
-
----
-
-### 2. `planByDailyAmount(...)`
-
-Use this when the teacher knows:
-
-- the Quran range to cover
-- the desired daily workload
-- the working days per week
-
-The engine derives:
-
-- study days needed
-- calendar days required
-- a matching `limitDays`
-
-### Input Shape
-
-```typescript
-.planByDailyAmount({
-  from: { surah: 66, ayah: 1 },
-  to: { surah: 55, ayah: 78 },
-  dailyLines: 14
-})
+```ts
+builder.addHifz(8, from, to);
 ```
 
-### Output Behavior
+Use this when the host owns the plan horizon through `limitDays`, `endDate`, or an explicit completion stop.
 
-The builder computes:
+## Hifz ecosystem
 
-- total lines between `from` and `to`
-- study days required at the given `dailyLines`
-- approximate calendar days based on `daysPerWeek`
+- Hifz: linear whole-ayah movement.
+- Minor review: recent completed Hifz history, surah-bounded by default.
+- Major review: stateful looping review with wall and optional horizon.
+- Multiple major-review calls create independent counters.
 
----
+## Review-only mode
 
-## Scenario Strategy
+Review-only plans are first-class through multiple explicit independent review cycles:
 
-The repository scenarios are currently being used as QA presets, not as the final product UX.
+```ts
+builder
+  .setSchedule({ startDate, daysPerWeek: 5, limitDays: 60, isReverse: true })
+  .addMajorReview(75, startA, endA)
+  .addMajorReview(150, startB, endB);
+```
 
-### Current Scenario Types
+An explicit range lets each counter reset independently. A review-only plan must provide `limitDays` or `endDate` because there is no Hifz completion event.
 
-- `beginner`
-  - uses `planByDuration(...)`
-  - fixed 30-day target
-  - strict sequential behavior
-  - frequent consolidation
+## Consolidation, holidays, and catch-up
 
-- `intermediate`
-  - uses `planByDuration(...)`
-  - fixed 90-day target
-  - balanced daily load
+- Consolidation suppresses Hifz every Nth generated study day.
+- Holidays emit an off day with no events.
+- A zero load-balancing allowance suppresses the track entirely.
+- Review tracks can continue when Hifz is suppressed.
 
-- `advanced`
-  - uses `planByDailyAmount(...)`
-  - fixed stronger daily amount
-  - engine computes required days automatically
+## Current acceptance status
 
-- `review-only`
-  - review without new memorization
-  - implemented using two major review loops
-  - temporary workaround
+- TypeScript build passes.
+- 73 automated tests pass.
+- 10 scenario validations pass.
+- Coverage includes long, short, mixed-boundary, forward, reverse, minor-review, independent-review, and snapshot cases.
 
----
+## Reference scenario catalogue
 
-## QA Milestones Already Completed
+The scenarios are executable QA presets, not the complete teacher-facing product catalogue.
 
-### Phase 1: Scenario Launcher
+| Key | Purpose |
+|---|---|
+| `beginner` | 30-day duration-driven plan with strict surah continuity and review reset coverage. |
+| `intermediate` | 90-day duration-driven plan with balanced review and Hifz completion. |
+| `advanced` | Stronger fixed daily amount with a derived completion horizon. |
+| `completion-before-limit` | Proves `stopWhenCompleted()` can end before a configured limit. |
+| `consolidation-audit` | Checks periodic review-only days and continued review activity. |
+| `rule-pipeline-stress` | Exercises rule ordering and preserves the hard ayah cap. |
+| `daily-amount-audit` | Audits the official daily-amount mode and its derived duration. |
+| `review-only-reset-stress` | Exercises resets for two independent review loops without Hifz. |
+| `review-only` | Models two review counters for a student paused after five ajza. |
+| `quarter-page` | Verifies very small page-derived daily Hifz amounts. |
 
-Completed work:
+Run them with `npm run start:<key>`, add `:excel` where a script exists, use `npm run start:all`, or run assertions with `npm run validate:scenarios`.
 
-- replace the old single-purpose `main.ts`
-- add scenario selection by key
-- add scenario listing
-- add run-all mode
-- keep console preview available for manual inspection
+## QA tooling and expected output
 
-### Phase 2: Reliable Windows CLI Scripts
+The repository retains a command-line scenario launcher with:
 
-Completed work:
+- `--list` to enumerate scenarios,
+- `--scenario=<key>` to run one,
+- `--all` to run all,
+- `--excel` to produce a human-auditable workbook,
+- console timing, notes, day/event output, and loop reset markers.
 
-- add explicit scripts in `package.json`
-- avoid unreliable argument forwarding through `npm start -- ...`
-- add dedicated Excel export commands for each scenario
+Excel files use names such as `QuranPlan_<scenario>_<date>.xlsx`. These tools are for repository QA; they are not the root npm API.
 
-### Phase 3: Exporter Support for Multiple Review Tracks
+## Completed implementation milestones
 
-Completed work:
+1. Core tracks, movement strategies, constraints, directional Quran repository, and deterministic scheduling.
+2. Ordered pedagogical rule pipeline with per-track scopes and final hard Hifz limits.
+3. Official duration and daily-amount builder modes.
+4. Multi-scenario CLI with Windows-friendly package scripts.
+5. Console and Excel human-review output for multiple review tracks.
+6. Scenario validator covering all ten reference scenarios.
+7. Snapshot/resume and Hijri display support.
+8. Capacity-aware surah completion, surah-bounded minor review, holidays, and catch-up propagation.
 
-- improve console labeling for multiple major review tracks
-- improve Excel export naming and formatting
-- preserve Arabic labels correctly in generated files
+## Official, internal, and declared-only surfaces
 
-### Phase 4: Official Builder Planning Modes
+### Official npm surface
 
-Completed work:
+- `PlanBuilder`, `TrackManager`, `MakeenEngine`, repositories, date utilities, exported enums/types/errors.
+- Duration/daily-amount planning, Hifz ecosystem composition, independent review loops, snapshots, and dataset validation.
 
-- add `planByDuration(...)`
-- add `planByDailyAmount(...)`
-- compute target range size using `QuranRepository.getLinesBetween(...)`
-- refactor scenarios to use official builder-level planning modes
+### Implemented repository tooling
 
----
+- Scenario definitions and launcher.
+- Excel/PDF adapters and QA export utilities.
+- Internal rule classes, strategies, constraints, and scenario validator.
 
-## What Is Official vs What Is Still Transitional
+These are real code but are not all stable root exports.
 
-### Official Now
+### Declared-only application contracts
 
-- builder-level duration planning
-- builder-level daily-amount planning
-- scenario launcher commands
-- Excel QA export scripts
-- multi-track review export support
+Finalization and export DTOs exist for host integrations, but the library has no persistence/finalization or file-export facade operation. Earlier HTTP route examples were application proposals, not implemented package endpoints.
 
-### Transitional / Temporary
+## Current limitations and next milestones
 
-- `review-only` uses two major review tracks instead of a true dedicated near-review-only track
-- derived day calculations are approximate and based on `daysPerWeek`, not full calendar simulation at builder stage
-- scenario targets are currently QA-oriented presets, not yet a complete teacher-facing preset catalog
-
----
-
-## Expected Outputs During QA
-
-### Console Output
-
-A successful run should show:
-
-- scenario header
-- scenario description
-- rule order
-- generation time
-- daily plan preview
-
-### Excel Output
-
-When Excel is enabled, a file should appear in the project root.
-
-Examples:
-
-- `QuranPlan_beginner_2026-04-09.xlsx`
-- `QuranPlan_advanced_2026-04-09.xlsx`
-- `QuranPlan_review-only_2026-04-09.xlsx`
-
----
-
-## Next Milestones
-
-### 1. Surface Derived Planning Metadata
-
-Recommended additions:
-
-- derived daily lines
-- derived study days
-- derived calendar days
-- completion-vs-limit reason
-
-### 2. Add a Scenario Validator
-
-Recommended QA outputs:
-
-- number of memorization days
-- number of review-only days
-- reset counts
-- total generated days
-- whether termination happened because of completion or because of `limitDays`
-
-### 3. Add a First-Class Review-Only Near Review Track
-
-Current limitation:
-
-- minor review depends on hifz history
-
-Target improvement:
-
-- support review-only plans without relying on a workaround using two major review tracks
-
-### 4. Improve Duration Accuracy
-
-Current behavior:
-
-- builder derives days from `durationDays` and `daysPerWeek`
-
-Future improvement:
-
-- align derived-day logic more closely with actual generated calendar behavior
-- include consolidation cadence and non-working day effects more explicitly in the estimate
-
----
-
-## Design Notes
-
-The official planning modes intentionally live in `PlanBuilder` rather than in scenario files.
-
-This keeps:
-
-- the planning logic reusable
-- the scenarios thin
-- future API integration easier
-
-In other words:
-
-- scenarios should describe use cases
-- builder modes should encode planning semantics
+1. Minor review requires Hifz history; review-only plans therefore compose two or more looping review tracks rather than a dedicated near-review-only strategy.
+2. `planByDuration` derives a daily amount from nominal study-day availability; incompatible ayah caps or consolidation settings can prevent the requested real-world finish date.
+3. Facade DTO unions include values such as `STABILIZATION`, `CUSTOM`, and `CATCH_UP` that are not all mapped to executable/output branches.
+4. `estimateTimeline` currently performs full generation; a lightweight estimator remains future work.
+5. Student-specific ability/fatigue profiles and named pedagogical presets are host concerns today.
+6. Termination metadata can be richer: completed range, day limit, end date, and no-progress conditions should eventually be explicit result fields.
+7. Scenario validation can later emit structured JSON and workload distributions in addition to pass/fail assertions.
+
+## Design principle
+
+Scenarios describe and verify use cases; `PlanBuilder` and `MakeenEngine` encode reusable planning behavior. Historical product documents preserve intent, while consumer contracts describe only current executable or explicitly declared surfaces.
