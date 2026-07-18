@@ -12,6 +12,7 @@ import { PlanningRule, RuleCandidate, RuleContext, RuleResult } from '../RuleInt
 export class MaxAyahRule implements PlanningRule {
     name = 'MaxAyahRule';
     priority = 55; // 🧠 Run LAST - hard cap that overrides all other adjustments
+    scope = 'memorization' as const;
 
     apply(candidate: RuleCandidate, context: RuleContext): RuleResult {
         // Skip for review tracks - they follow lesson boundaries
@@ -24,6 +25,12 @@ export class MaxAyahRule implements PlanningRule {
         
         // Get max ayah constraint (default to 10 if not specified)
         const maxAyah = context.maxAyahPerDay ?? 10;
+
+        // A teacher may explicitly allow the capacity-aware surah-completion
+        // exception to override the ayah cap. It never happens implicitly.
+        if (candidate.permittedOverflowEnd && context.surahCompletionMayExceedMaxAyahs) {
+            return { approvedEnd: currentEnd };
+        }
 
         // Calculate how many ayahs in this step
         const startIdx = repo.getIndexFromLocation(

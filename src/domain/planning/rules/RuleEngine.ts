@@ -37,6 +37,11 @@ export class RuleEngine {
         let totalAdjustment = 0;
 
         for (const rule of this.rules) {
+            const isReview = currentCandidate.flags?.includes('review') ?? false;
+            if (rule.scope !== 'all' && rule.scope !== (isReview ? 'review' : 'memorization')) {
+                continue;
+            }
+
             const result = rule.apply(currentCandidate, context);
             const locationChanged =
                 result.approvedEnd.surah !== currentCandidate.proposedEnd.surah ||
@@ -53,14 +58,15 @@ export class RuleEngine {
                 currentCandidate.proposedEnd = result.approvedEnd;
                 finalResult.approvedEnd = result.approvedEnd;
             }
+
+            if (result.metadata?.grantsLineOverflow) {
+                currentCandidate.permittedOverflowEnd = result.approvedEnd;
+            }
             
             if (result.warnings && result.warnings.length > 0) {
                 finalResult.warnings!.push(...result.warnings);
             }
 
-            if (finalResult.approvedEnd.is_end) {
-                break;
-            }
         }
 
         if (appliedRules.length > 0) {

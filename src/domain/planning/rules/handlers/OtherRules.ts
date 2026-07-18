@@ -3,6 +3,7 @@ import { PlanningRule, RuleCandidate, RuleContext, RuleResult } from '../RuleInt
 export class ThematicHaltingRule implements PlanningRule {
     name = 'ThematicHaltingRule';
     priority = 40;
+    scope = 'memorization' as const;
 
     apply(candidate: RuleCandidate, context: RuleContext): RuleResult {
         // Skip for review tracks - preserve full lesson boundaries
@@ -12,6 +13,10 @@ export class ThematicHaltingRule implements PlanningRule {
 
         const repo = context.repository;
         const currentEnd = candidate.proposedEnd;
+
+        if (currentEnd.is_end) {
+            return { approvedEnd: currentEnd };
+        }
         
         // 🧠 Skip for short surahs (<50 ayahs) - prevents over-segmentation
         const surahAyahCount = repo.getAyahCount(currentEnd.surah);
@@ -60,6 +65,7 @@ export class ThematicHaltingRule implements PlanningRule {
 export class BalanceCorrectionRule implements PlanningRule {
     name = 'BalanceCorrectionRule';
     priority = 50;
+    scope = 'memorization' as const;
 
     apply(candidate: RuleCandidate, context: RuleContext): RuleResult {
         // Skip correction for review steps - they use lesson boundaries, not line targets

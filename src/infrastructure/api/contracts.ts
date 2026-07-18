@@ -9,6 +9,7 @@ export interface CreatePlanPreviewRequestDTO {
     direction: PlanDirection;
     daysPerWeek: number;
     catchUpDay?: number;
+    holidays?: string[];
     tracks: TrackConfigDTO[];
     /** Opt-in: include a Hijri (Umm al-Qura) date on each returned day. */
     includeHijri?: boolean;
@@ -36,6 +37,9 @@ export interface PlanEventDTO {
     end: LocationDTO;
     linesCount: number;
     appliedRules?: string[];
+    requestedLines?: number;
+    overflowLines?: number;
+    overflowReason?: 'AYAH_INTEGRITY' | 'SURAH_COMPLETION';
 }
 
 export interface PlanDayDTO {

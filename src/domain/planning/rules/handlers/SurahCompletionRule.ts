@@ -14,6 +14,7 @@ import { PlanningRule, RuleCandidate, RuleContext, RuleResult } from '../RuleInt
 export class SurahCompletionRule implements PlanningRule {
     name = 'SurahCompletionRule';
     priority = 18; // Between MaxAyah (15) and SurahSnap (20)
+    scope = 'memorization' as const;
 
     apply(candidate: RuleCandidate, context: RuleContext): RuleResult {
         // Skip for review tracks
@@ -63,9 +64,8 @@ export class SurahCompletionRule implements PlanningRule {
         // Calculate remaining ayahs to surah end
         const remainingAyahs = ayahCount - currentEnd.ayah;
         
-        // If small amount remaining (<= 5 ayahs), snap to complete the surah
-        // This is a reasonable threshold for "completing" vs "stopping mid-surah"
-        if (remainingAyahs <= 5) {
+        // Completion is governed by line capacity, never a raw ayah count.
+        if (remainingAyahs > 0) {
             const newEnd = { 
                 surah: currentEnd.surah, 
                 ayah: ayahCount, 
@@ -77,12 +77,17 @@ export class SurahCompletionRule implements PlanningRule {
                 repo.getDirectionData(candidate.isReverse).index_map
             );
 
-            return {
+            const completedLines = repo.getLinesBetween(candidate.start, newEndLoc, candidate.isReverse);
+            const overflowAllowance = Math.max(0, context.surahCompletionMaxOverflowLines ?? 2);
+            const maxPermittedLines = candidate.targetLines + overflowAllowance;
+
+            if (completedLines <= maxPermittedLines) return {
                 approvedEnd: newEndLoc,
                 metadata: {
                     appliedRule: this.name,
-                    reason: `Completed Surah ${currentEnd.surah} (${remainingAyahs} remaining ayahs)`,
-                    adjustmentLines: repo.getLinesBetween(currentEnd, newEndLoc, candidate.isReverse)
+                    reason: `Completed Surah ${currentEnd.surah} within ${overflowAllowance} optional overflow lines`,
+                    adjustmentLines: repo.getLinesBetween(currentEnd, newEndLoc, candidate.isReverse),
+                    grantsLineOverflow: true
                 }
             };
         }

@@ -69,4 +69,30 @@ describe('EngineFacade integration tests', () => {
         expect(symmetryCheck).toBeDefined();
         expect(symmetryCheck?.passed).toBe(true);
     });
+
+    it('passes catch-up days and holidays through the public facade', () => {
+        const baseTrack = {
+            type: 'HIFZ' as const,
+            priority: 1,
+            amountUnit: 'LINES' as const,
+            amountValue: 5,
+            start: { surah: 78, ayah: 1 },
+            end: { surah: 78, ayah: 20 }
+        };
+
+        const catchUp = MakeenEngine.generatePlan({
+            name: 'Catch-up', startDate: '2026-03-30', direction: 'FORWARD',
+            daysPerWeek: 7, catchUpDay: 1, tracks: [baseTrack]
+        });
+        expect(catchUp.success).toBe(true);
+        expect(catchUp.data.plan[0].events.some(event => event.eventType === 'MEMORIZATION')).toBe(false);
+
+        const holiday = MakeenEngine.generatePlan({
+            name: 'Holiday', startDate: '2026-03-30', direction: 'FORWARD',
+            daysPerWeek: 7, holidays: ['2026-03-30'], tracks: [baseTrack]
+        });
+        expect(holiday.success).toBe(true);
+        expect(holiday.data.plan[0].dayType).toBe('OFF');
+        expect(holiday.data.plan[0].events).toEqual([]);
+    });
 });

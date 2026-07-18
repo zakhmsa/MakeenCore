@@ -68,8 +68,8 @@ export class HifzSystem {
         scheduleConfig?: ScheduleConfig | null
     ) {
         // Use surah-bounded strategy if enabled in schedule config
-        if (scheduleConfig?.surahBoundedMinorReview) {
-            const pagesCount = scheduleConfig.minorReviewPagesCount;
+        if (scheduleConfig?.surahBoundedMinorReview !== false) {
+            const pagesCount = scheduleConfig?.minorReviewPagesCount;
             // Create custom track with surah-bounded strategy
             const strategy = new SurahBoundedWindowStrategy();
             const customConfig = {

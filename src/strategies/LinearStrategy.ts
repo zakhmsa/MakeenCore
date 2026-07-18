@@ -39,6 +39,18 @@ export class LinearStrategy implements IMovementStrategy {
             effectiveMax
         );
 
+        // Float32 prefix sums can sit microscopically below an exact line
+        // boundary (for example 7.99997 instead of 8). Normalize using the same
+        // two-decimal precision exposed by the engine so an unnecessary extra
+        // ayah is never selected.
+        while (stopIdx > currentIdx) {
+            const previousLines = Number(
+                (context.cumulativeArray[stopIdx - 1] - currentCum).toFixed(2)
+            );
+            if (previousLines < config.amount) break;
+            stopIdx--;
+        }
+
         // 4. 🛡️ OVERSHOOT PROTECTION (Edge Case Handling)
         // If the calculated step goes beyond the user's defined end,
         // we clamp it exactly to the end index.
@@ -52,6 +64,7 @@ export class LinearStrategy implements IMovementStrategy {
             start: context.quranRepo.getLocationFromIndex(currentIdx, context.indexMap),
             end: context.quranRepo.getLocationFromIndex(stopIdx, context.indexMap),
             linesProcessed: parseFloat((context.cumulativeArray[stopIdx] - currentCum).toFixed(2)),
+            requestedLines: config.amount,
             flags: ['memorization'] // Mark as memorization for rule pipeline
         };
 

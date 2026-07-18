@@ -3,6 +3,7 @@ import { PlanningRule, RuleCandidate, RuleContext, RuleResult } from '../RuleInt
 export class SurahSnapRule implements PlanningRule {
     name = 'SurahSnapRule';
     priority = 20;
+    scope = 'memorization' as const;
 
     apply(candidate: RuleCandidate, context: RuleContext): RuleResult {
         const repo = context.repository;

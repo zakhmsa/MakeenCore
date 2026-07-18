@@ -5,6 +5,8 @@ export interface RuleMetadata {
     appliedRule: string;
     reason: string;
     adjustmentLines: number; // Positive if lines were added, negative if removed
+    /** Allows the final line-cap rule to preserve this exact exception boundary. */
+    grantsLineOverflow?: boolean;
 }
 
 export interface RuleCandidate {
@@ -13,6 +15,10 @@ export interface RuleCandidate {
     targetLines: number;    // The original requested line count
     isReverse: boolean;     // Direction of memorization
     flags?: string[];       // Optional flags like 'review' to identify track type
+    /** Raw whole-ayah boundary selected by the movement strategy. */
+    lineLimitEnd?: LocationObj;
+    /** Explicit exception boundary granted by a capacity-aware soft rule. */
+    permittedOverflowEnd?: LocationObj;
 }
 
 export interface RuleResult {
@@ -30,11 +36,16 @@ export interface RuleContext {
     maxAyahPerDay?: number;
     sequentialSurahMode?: boolean;
     strictSequentialMode?: boolean; // If true, never allow surah jumps until 100% complete
+    surahCompletionMaxOverflowLines?: number;
+    surahCompletionMayExceedMaxAyahs?: boolean;
 }
+
+export type RuleScope = 'all' | 'memorization' | 'review';
 
 export interface PlanningRule {
     readonly name: string;
     readonly priority: number; // Determines explicit rule ordering
+    readonly scope: RuleScope;
     
     /**
      * Applies the rule to the candidate location.

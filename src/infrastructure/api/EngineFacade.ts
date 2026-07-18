@@ -25,6 +25,8 @@ export class EngineFacade {
     public static generatePlan(request: CreatePlanPreviewRequestDTO): CreatePlanPreviewResponseDTO {
         try {
             const builder = new PlanBuilder();
+            const hifzConfig = request.tracks.find(track => track.type === 'HIFZ')?.config ?? {};
+            const minorTrack = request.tracks.find(track => track.type === 'MINOR_REVIEW');
 
             // Set global schedule configuration
             builder.setSchedule({
@@ -33,7 +35,17 @@ export class EngineFacade {
                 limitDays: 0, // 0 = continuous until completed
                 isReverse: request.direction === 'REVERSE',
                 catchUpDayOfWeek: request.catchUpDay,
-                includeHijri: request.includeHijri
+                holidays: request.holidays,
+                includeHijri: request.includeHijri,
+                maxAyahPerDay: hifzConfig.maxAyahPerDay,
+                sequentialSurahMode: hifzConfig.sequentialSurahMode,
+                strictSequentialMode: hifzConfig.strictSequentialMode,
+                surahCompletion: hifzConfig.surahCompletion,
+                consolidationDayInterval: hifzConfig.consolidationDayInterval,
+                surahBoundedMinorReview: minorTrack?.config?.surahBounded ?? true,
+                minorReviewPagesCount: minorTrack?.amountUnit === 'PAGES'
+                    ? minorTrack.amountValue
+                    : minorTrack?.config?.pagesCount
             });
 
             // Map DTO tracks into the domain builder
@@ -42,14 +54,14 @@ export class EngineFacade {
                     case 'HIFZ':
                         if (!track.start) throw new Error("Hifz track requires start location.");
                         builder.addHifz(
-                            track.amountValue, 
+                            track.amountUnit === 'PAGES' ? track.amountValue * 15 : track.amountValue,
                             { surah: track.start.surah, ayah: track.start.ayah },
                             track.end ? { surah: track.end.surah, ayah: track.end.ayah } : undefined
                         );
                         break;
                     case 'MINOR_REVIEW':
                         builder.addMinorReview(
-                            track.amountValue, 
+                            track.amountUnit === 'PAGES' ? track.amountValue * 15 : track.amountValue,
                             track.config?.mode === 'FIXED' ? WindowMode.FIXED : WindowMode.GRADUAL
                         );
                         break;
@@ -97,8 +109,10 @@ export class EngineFacade {
                                 start: { surah: ev.data.start.surah, ayah: ev.data.start.ayah },
                                 end: { surah: ev.data.end.surah, ayah: ev.data.end.ayah },
                                 linesCount: ev.data.lines || 0,
-                                // Safely extract tracked metadata if present
-                                appliedRules: []
+                                appliedRules: ev.data.appliedRules ?? [],
+                                requestedLines: ev.data.requestedLines,
+                                overflowLines: ev.data.overflowLines,
+                                overflowReason: ev.data.overflowReason
                             };
                         })
                     }))

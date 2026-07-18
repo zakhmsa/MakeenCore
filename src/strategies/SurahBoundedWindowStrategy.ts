@@ -25,9 +25,6 @@ interface SurahBoundedWindowStrategyConfig {
  * - يمكن تحديد مقدار المراجعة بالأوجه
  */
 export class SurahBoundedWindowStrategy implements IMovementStrategy {
-    private currentSurah: number | null = null;
-    private historyInCurrentSurah: TrackState['history'] = [];
-
     calculateNextStep(
         state: TrackState,
         context: PlanContext,
@@ -37,47 +34,80 @@ export class SurahBoundedWindowStrategy implements IMovementStrategy {
         if (!sourceTrack) return null;
 
         const fullHistory = sourceTrack.state.history;
+        const todayLesson = fullHistory[fullHistory.length - 1];
         const pastLessons = fullHistory.slice(0, -1); // Exclude today's lesson
 
-        if (pastLessons.length === 0) return null;
+        if (!todayLesson || pastLessons.length === 0) return null;
 
-        // Get current hifz position to determine surah
-        const currentHifzIdx = sourceTrack.state.currentIdx;
+        // The active surah is based on material actually memorized today, not
+        // currentIdx (which already points at tomorrow's first ayah).
         const currentLocation = context.quranRepo.getLocationFromIndex(
-            currentHifzIdx,
+            todayLesson.endIdx,
             context.indexMap
         );
         const currentSurahNum = currentLocation.surah;
+        const surahStartIdx = context.quranRepo.getIndexFromLocation(currentSurahNum, 1, context.isReverse);
+        const surahEndIdx = context.quranRepo.getIndexFromLocation(
+            currentSurahNum,
+            context.quranRepo.getAyahCount(currentSurahNum),
+            context.isReverse
+        );
 
-        // Check if surah changed - if so, reset counter
-        if (this.currentSurah !== null && this.currentSurah !== currentSurahNum) {
-            this.historyInCurrentSurah = [];
-        }
-        this.currentSurah = currentSurahNum;
+        // Intersect lesson history with the active surah. This also handles a
+        // memorization lesson that crosses a surah boundary.
+        const lessonsInSurah = pastLessons.filter(
+            lesson => lesson.endIdx >= surahStartIdx && lesson.startIdx <= surahEndIdx
+        );
+        if (lessonsInSurah.length === 0) return null;
 
-        // Filter history to only include lessons in current surah (limited to config.count)
-        this.historyInCurrentSurah = pastLessons.slice(-config.count).filter(lesson => {
-            const lessonStartLoc = context.quranRepo.getLocationFromIndex(
-                lesson.startIdx,
-                context.indexMap
-            );
-            return lessonStartLoc.surah === currentSurahNum;
-        });
-
-        // Determine the count (either lessons or pages)
-        let effectiveCount = config.count;
         if (config.pagesCount !== undefined) {
-            // Convert pages to approximate lesson count
-            // Standard page = 15 lines, average lesson varies
-            // For now, we'll use a simple heuristic: 1 page ≈ 1 lesson
-            // This can be refined based on actual lesson sizes
-            effectiveCount = config.pagesCount;
+            return this.calcByLines(
+                lessonsInSurah,
+                context,
+                config.pagesCount * 15,
+                surahStartIdx,
+                surahEndIdx
+            );
         }
 
-        // Apply window mode
+        const boundedLessons = lessonsInSurah.map(lesson => ({
+            ...lesson,
+            startIdx: Math.max(lesson.startIdx, surahStartIdx),
+            endIdx: Math.min(lesson.endIdx, surahEndIdx)
+        }));
+
         return config.mode === WindowMode.FIXED
-            ? this.calcFixed(this.historyInCurrentSurah, context, effectiveCount)
-            : this.calcGradual(this.historyInCurrentSurah, context, effectiveCount);
+            ? this.calcFixed(boundedLessons, context, config.count)
+            : this.calcGradual(boundedLessons, context, config.count);
+    }
+
+    private calcByLines(
+        lessons: TrackState['history'],
+        context: PlanContext,
+        targetLines: number,
+        surahStartIdx: number,
+        surahEndIdx: number
+    ): StepResult | null {
+        if (targetLines <= 0 || lessons.length === 0) return null;
+
+        const coverageStart = Math.max(lessons[0].startIdx, surahStartIdx);
+        const coverageEnd = Math.min(lessons[lessons.length - 1].endIdx, surahEndIdx);
+        if (coverageStart > coverageEnd) return null;
+
+        // Walk backwards until the requested page/line window is met. The last
+        // included ayah remains whole, mirroring memorization boundary handling.
+        let startIdx = coverageEnd;
+        while (startIdx > coverageStart) {
+            const lines = context.quranRepo.getLinesBetween(
+                context.quranRepo.getLocationFromIndex(startIdx, context.indexMap),
+                context.quranRepo.getLocationFromIndex(coverageEnd, context.indexMap),
+                context.isReverse
+            );
+            if (lines >= targetLines) break;
+            startIdx--;
+        }
+
+        return this.buildResult(startIdx, coverageEnd, context);
     }
 
     private calcGradual(

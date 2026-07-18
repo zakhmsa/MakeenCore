@@ -3,6 +3,7 @@ import { PlanningRule, RuleCandidate, RuleContext, RuleResult } from '../RuleInt
 export class AyahIntegrityRule implements PlanningRule {
     name = 'AyahIntegrityRule';
     priority = 10;
+    scope = 'all' as const;
 
     apply(candidate: RuleCandidate, context: RuleContext): RuleResult {
         // Our ReferenceRepository already returns full Ayahs.

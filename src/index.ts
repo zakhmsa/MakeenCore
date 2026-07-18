@@ -11,6 +11,7 @@ export { QuranRepositoryOptimized } from './core/QuranRepositoryOptimized';
 export { QuranDataBinary } from './data/QuranDataBinary';
 export { TrackManager } from './core/TrackManager';
 export { PlanBuilder } from './builders/PlanBuilder';
+export * from './builders/PlanTypes';
 
 // 2. Export Types & Enums
 export * from './core/types';

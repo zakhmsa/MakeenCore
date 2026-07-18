@@ -12,6 +12,7 @@ import { HifzSystem } from './HifzSystem';
 import { QuranRepository } from '../core/QuranRepository';
 import { WindowMode, TrackId } from '../core/constants';
 import { PlanError, PlanErrorCode, Severity } from '../errors';
+import { findExponentialStopIndex } from '../utils/Algorithms';
 
 /**
  * PlanBuilder
@@ -105,13 +106,65 @@ export class PlanBuilder {
             );
         }
 
-        const totalLines = repo.getLinesBetween(config.from, config.to, schedule.isReverse ?? false);
-        const studyDaysNeeded = Math.max(1, Math.ceil(totalLines / config.dailyLines));
-        const calendarDaysNeeded = Math.max(1, Math.ceil((studyDaysNeeded * 7) / schedule.daysPerWeek));
+        const startIdx = repo.getIndexFromLocation(config.from.surah, config.from.ayah, schedule.isReverse ?? false);
+        const endIdx = repo.getIndexFromLocation(config.to.surah, config.to.ayah, schedule.isReverse ?? false);
+        const direction = schedule.isReverse ?? false;
+        const directionData = repo.getDirectionData(direction);
+        const maxAyahs = schedule.maxAyahPerDay ?? 10;
+
+        // Partition the exact canonical range with both hard constraints. Taking
+        // max(totalLines/limit, totalAyahs/limit) is insufficient because the two
+        // constraints bind on different days in mixed short/long-ayah regions.
+        let cursor = startIdx;
+        let activeMemorizationDays = 0;
+        while (cursor <= endIdx) {
+            const currentCum = cursor > 0 ? directionData.cumulative_array[cursor - 1] : 0;
+            let stopIdx = findExponentialStopIndex(
+                directionData.cumulative_array,
+                currentCum + config.dailyLines,
+                cursor,
+                endIdx
+            );
+
+            while (stopIdx > cursor) {
+                const previousLines = Number(
+                    (directionData.cumulative_array[stopIdx - 1] - currentCum).toFixed(2)
+                );
+                if (previousLines < config.dailyLines) break;
+                stopIdx--;
+            }
+
+            stopIdx = Math.min(stopIdx, cursor + maxAyahs - 1, endIdx);
+
+            if (schedule.strictSequentialMode) {
+                const startLocation = repo.getLocationFromIndex(cursor, directionData.index_map);
+                const stopLocation = repo.getLocationFromIndex(stopIdx, directionData.index_map);
+                if (stopLocation.surah !== startLocation.surah) {
+                    stopIdx = repo.getIndexFromLocation(
+                        startLocation.surah,
+                        repo.getAyahCount(startLocation.surah),
+                        direction
+                    );
+                }
+            }
+
+            activeMemorizationDays++;
+            cursor = stopIdx + 1;
+        }
+        let scheduledStudyDays = activeMemorizationDays;
+        const consolidationInterval = schedule.consolidationDayInterval;
+        if (consolidationInterval && consolidationInterval > 1) {
+            // Every Nth generated study day is review-only. Find the smallest
+            // horizon that still contains all required memorization days.
+            while (scheduledStudyDays - Math.floor(scheduledStudyDays / consolidationInterval) < activeMemorizationDays) {
+                scheduledStudyDays++;
+            }
+        }
 
         this.scheduleConfig = {
             ...schedule,
-            limitDays: calendarDaysNeeded
+            // TrackManager counts generated study days, not skipped weekdays.
+            limitDays: scheduledStudyDays
         };
 
         this.replaceFirstHifzRequest(config.dailyLines, config.from, config.to);
@@ -188,10 +241,15 @@ export class PlanBuilder {
             limitDays: this.scheduleConfig.limitDays || 0,
             endDate: this.scheduleConfig.endDate,
             isReverse: this.scheduleConfig.isReverse || false,
+            catchUpDayOfWeek: this.scheduleConfig.catchUpDayOfWeek,
+            holidays: this.scheduleConfig.holidays,
             // Pedagogical constraints
             maxAyahPerDay: this.scheduleConfig.maxAyahPerDay,
-            sequentialSurahMode: this.scheduleConfig.sequentialSurahMode,
+            sequentialSurahMode: this.scheduleConfig.surahCompletion?.enabled
+                ?? this.scheduleConfig.sequentialSurahMode,
             strictSequentialMode: this.scheduleConfig.strictSequentialMode,
+            surahCompletionMaxOverflowLines: this.scheduleConfig.surahCompletion?.maxOverflowLines,
+            surahCompletionMayExceedMaxAyahs: this.scheduleConfig.surahCompletion?.mayExceedMaxAyahs,
             consolidationDayInterval: this.scheduleConfig.consolidationDayInterval,
             includeHijri: this.scheduleConfig.includeHijri
         }, repository); // Passing the dependency

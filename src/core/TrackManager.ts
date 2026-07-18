@@ -11,6 +11,7 @@ import { RuleEngine } from '../domain/planning/rules/RuleEngine';
 import { RuleContext, RuleCandidate } from '../domain/planning/rules/RuleInterface';
 import { AyahIntegrityRule } from '../domain/planning/rules/handlers/AyahIntegrityRule';
 import { MaxAyahRule } from '../domain/planning/rules/handlers/MaxAyahRule';
+import { MaxLinesRule } from '../domain/planning/rules/handlers/MaxLinesRule';
 import { SurahCompletionRule } from '../domain/planning/rules/handlers/SurahCompletionRule';
 import { SurahSnapRule } from '../domain/planning/rules/handlers/SurahSnapRule';
 import { PageAlignmentRule } from '../domain/planning/rules/handlers/PageAlignmentRule';
@@ -31,6 +32,8 @@ export interface ManagerConfig {
     maxAyahPerDay?: number;
     sequentialSurahMode?: boolean;
     strictSequentialMode?: boolean;      // If true, never jump surah until 100% complete
+    surahCompletionMaxOverflowLines?: number;
+    surahCompletionMayExceedMaxAyahs?: boolean;
     consolidationDayInterval?: number; // Every N days, no new hifz (only review)
     includeHijri?: boolean;            // Opt-in: attach a Hijri (Umm al-Qura) date to each PlanDay
 }
@@ -67,9 +70,9 @@ export class TrackManager {
             new PageAlignmentRule(),
             new ThematicHaltingRule(),
             new BalanceCorrectionRule(),
-            new MaxAyahRule()         // 🧠 Pedagogical: max ayahs per day (runs LAST - hard cap)
+            new MaxAyahRule(),
+            new MaxLinesRule()        // Always last: no soft rule may bypass line capacity
         ]);
-        console.log('[TrackManager] Rule order:', this.ruleEngine.getRuleNamesInOrder());
     }
 
     addTrack(track: ITrack) {
@@ -206,6 +209,8 @@ export class TrackManager {
             // Check if today is a consolidation day (no new hifz, only review)
             const isConsolidationDay = this.config.consolidationDayInterval !== undefined && 
                                       (dayCounter % this.config.consolidationDayInterval === 0);
+            const isCatchUpDay = this.config.catchUpDayOfWeek !== undefined
+                && currentDate.getDay() === this.config.catchUpDayOfWeek;
 
             // Execute tracks in ascending id order — enforces HIFZ(1)→MINOR(2)→MAJOR(3).
             // WindowStrategy depends on Hifz history already being committed before it runs.
@@ -213,21 +218,27 @@ export class TrackManager {
             for (const track of [...this.tracks.values()].sort((a, b) => a.id - b.id)) {
                 
                 // 🧠 Skip Hifz on consolidation days (only review allowed)
-                if (isConsolidationDay && track.type === 'linear') {
+                if ((isConsolidationDay || isCatchUpDay) && track.type === 'linear') {
+                    continue;
+                }
+
+                // A zero load-balancer allowance suppresses the track entirely;
+                // calculating with amount=0 would still emit its first whole ayah.
+                if (trackAllowances.get(track.id) === 0) {
                     continue;
                 }
 
                 // If there's a dynamic allowance, override the track config temporarily
-                const originalLines = (track as any).config.dailyLines;
+                const originalLines = (track as any).config.amount;
                 if (trackAllowances.has(track.id)) {
-                    (track as any).config.dailyLines = trackAllowances.get(track.id);
+                    (track as any).config.amount = trackAllowances.get(track.id);
                 }
 
                 const rawStep = track.calculateNextStep(dayContext);
 
                 // Restore
                 if (trackAllowances.has(track.id)) {
-                    (track as any).config.dailyLines = originalLines;
+                    (track as any).config.amount = originalLines;
                 }
 
                 const rawSteps = Array.isArray(rawStep) ? rawStep : (rawStep ? [rawStep] : []);
@@ -237,9 +248,10 @@ export class TrackManager {
                     const candidate: RuleCandidate = {
                         start: rs.start,
                         proposedEnd: rs.end,
-                        targetLines: rs.linesProcessed,
+                        targetLines: rs.requestedLines ?? rs.linesProcessed,
                         isReverse: this.config.isReverse,
-                        flags: rs.flags  // Pass flags to identify review tracks
+                        flags: rs.flags,
+                        lineLimitEnd: rs.end
                     };
 
                     const ruleContext: RuleContext = {
@@ -249,7 +261,9 @@ export class TrackManager {
                         // 🧠 Pedagogical constraints
                         maxAyahPerDay: this.config.maxAyahPerDay,
                         sequentialSurahMode: this.config.sequentialSurahMode,
-                        strictSequentialMode: this.config.strictSequentialMode
+                        strictSequentialMode: this.config.strictSequentialMode,
+                        surahCompletionMaxOverflowLines: this.config.surahCompletionMaxOverflowLines,
+                        surahCompletionMayExceedMaxAyahs: this.config.surahCompletionMayExceedMaxAyahs
                     };
 
                     const ruleResult = this.ruleEngine.evaluate(candidate, ruleContext);
@@ -257,6 +271,9 @@ export class TrackManager {
                     // Rebuild step with approved end
                     const approvedIdx = this.quranRepo.getIndexFromLocation(ruleResult.approvedEnd.surah, ruleResult.approvedEnd.ayah, this.config.isReverse);
                     const finalLines = this.quranRepo.getLinesBetween(candidate.start, ruleResult.approvedEnd, this.config.isReverse);
+                    const overflowLines = Math.max(0, Number((finalLines - candidate.targetLines).toFixed(2)));
+                    const completedByRule = (ruleResult.metadata?.appliedRule.includes('SurahCompletionRule') ?? false)
+                        && ruleResult.approvedEnd.is_end;
                     
                     const step: typeof rs = {
                         ...rs,
@@ -294,6 +311,12 @@ export class TrackManager {
                             start: eStart,
                             end: eEnd,
                             lines: step.linesProcessed,
+                            requestedLines: track.type === 'linear' ? candidate.targetLines : undefined,
+                            overflowLines: track.type === 'linear' ? overflowLines : undefined,
+                            overflowReason: track.type === 'linear' && overflowLines > 0
+                                ? (completedByRule ? 'SURAH_COMPLETION' : 'AYAH_INTEGRITY')
+                                : undefined,
+                            appliedRules: step.appliedRules,
                             is_reset: step.flags?.includes('reset')
                         }
                     };

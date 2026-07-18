@@ -53,6 +53,8 @@ export interface StepResult {
     startIdx: number;
     endIdx: number;
     linesProcessed: number;
+    /** Configured daily line capacity before whole-ayah rounding. */
+    requestedLines?: number;
     flags?: string[];
     appliedRules?: string[];  // Epic 2: track applied rules
     snapReason?: string;      // Epic 2: reason for adjustment
@@ -73,6 +75,10 @@ export interface PlanEvent {
         start: LocationObj;
         end: LocationObj;
         lines?: number;
+        requestedLines?: number;
+        overflowLines?: number;
+        overflowReason?: 'AYAH_INTEGRITY' | 'SURAH_COMPLETION';
+        appliedRules?: string[];
         is_reset?: boolean;     // For looping tracks
     };
 }

@@ -59,25 +59,28 @@ export interface ScheduleConfig {
     endDate?: string;        // Optional deadline
     isReverse?: boolean;     // false = Fatiha→Nas, true = Nas→Fatiha
     catchUpDayOfWeek?: number; // Optional catch-up day index (0-6)
+    holidays?: string[];       // Exact YYYY-MM-DD off days
     
     // PEDAGOGICAL CONSTRAINTS (for human-optimized planning)
     /** Maximum ayahs per day (default: 10, recommended: 5-15) */
     maxAyahPerDay?: number;
     /** Complete surah before jumping to next (default: false) */
     sequentialSurahMode?: boolean;
+    /** Capacity-aware surah completion measured in mushaf lines. */
+    surahCompletion?: SurahCompletionConfig;
     /** Every N days, take a consolidation day (no new hifz, only review) */
     consolidationDayInterval?: number;
     /** 
      * Strict sequential mode: never change surah until 100% complete.
      * If true: waits on consolidation days if surah completion would exceed maxAyahPerDay.
-     * If false (default): allows small overages (≤5 ayahs) to complete surahs.
+     * Kept for backwards compatibility. Hard daily constraints still run.
      */
     strictSequentialMode?: boolean;
     
     // MINOR REVIEW CONFIGURATION
     /** 
      * Surah-bounded minor review: review stays within current surah only.
-     * When enabled, minor review counter resets when hifz moves to a new surah.
+     * Defaults to true. Set false only for the legacy cross-surah window.
      */
     surahBoundedMinorReview?: boolean;
     /**
@@ -112,4 +115,13 @@ export interface BuilderContext {
 export interface LinearTrackConfig {
     amount: number;
     endIdx?: number; // Optional: If undefined, runs to end of Quran
+}
+
+/** Optional, capacity-aware preference for finishing the current surah. */
+export interface SurahCompletionConfig {
+    enabled: boolean;
+    /** Maximum optional overflow above the daily line limit. Default: 2 lines. */
+    maxOverflowLines?: number;
+    /** Whether surah completion may also exceed maxAyahPerDay. Default: false. */
+    mayExceedMaxAyahs?: boolean;
 }

@@ -120,9 +120,9 @@ function validateScenario(scenario: ScenarioDefinition): ValidationResult {
             case 'rule-pipeline-stress': {
                 const memorization = getMemorizationEvents(plan);
                 const overLimit = memorization.some(event => countAyahs(event, true) > 4);
-                assertCondition(overLimit, 'Rule pipeline stress should show at least one memorization event exceeding raw maxAyahPerDay due to ordered rules.');
+                assertCondition(!overLimit, 'Hard maxAyahPerDay must survive the complete ordered rule pipeline.');
                 assertCondition(hasResetEvent(plan), 'Rule pipeline stress should also produce at least one reset event.');
-                checks.push('ordered rules produce at least one over-limit memorization boundary');
+                checks.push('ordered rules preserve the hard maxAyahPerDay boundary');
                 checks.push('major review reset still occurs under stress');
                 break;
             }

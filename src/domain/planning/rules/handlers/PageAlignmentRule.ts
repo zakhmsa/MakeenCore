@@ -8,6 +8,7 @@ export class PageAlignmentRule implements PlanningRule {
     name = 'PageAlignmentRule';
 
     priority = 30;
+    scope = 'memorization' as const;
 
     apply(candidate: RuleCandidate, context: RuleContext): RuleResult {
         // Skip for review tracks - preserve full lesson boundaries
@@ -17,6 +18,12 @@ export class PageAlignmentRule implements PlanningRule {
 
         const repo = context.repository;
         const currentEnd = candidate.proposedEnd;
+
+        // A surah-end boundary is already semantically complete. Page alignment
+        // must never move the candidate into the following surah.
+        if (currentEnd.is_end) {
+            return { approvedEnd: currentEnd };
+        }
 
         // Skip if already at page end
         if (currentEnd.is_page_end) {
