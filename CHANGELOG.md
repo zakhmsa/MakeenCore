@@ -2,6 +2,11 @@
 
 All notable changes to `@zakhm_sa/makeen-core` are documented in this file.
 
+## [1.3.1] - 2026-11-26
+
+### Fixed
+- **`planByDuration` with `unit: 'AYAHS'` working-day calculation:** `getEffectiveMemorizationDays` now converts `durationDays` (calendar window) into working study days via `getStudyDaysWithinDuration(durationDays, daysPerWeek)` before subtracting holidays, consolidation days, and catch-up days — matching the `LINES` duration path so `AYAHS` duration plans finish within the requested calendar duration even when `daysPerWeek < 7` or `endDate` bounds the calendar window.
+
 ## [1.3.0] - 2026-11-26
 
 ### Added

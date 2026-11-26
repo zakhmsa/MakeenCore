@@ -285,13 +285,57 @@ describe('AYAHS daily amount mode', () => {
         }).toThrowError(PlanError);
     });
 
-    it('7. Duration mode with unit: AYAHS derives N accounting for consolidation days and holidays and finishes within duration', () => {
+    it('7. Duration mode with unit: AYAHS derives N accounting for daysPerWeek, consolidation days, catch-up days, and holidays and finishes within calendar duration', () => {
+        // Repro 1: 14 calendar days at 4 days/week -> 8 study days -> ceil(40 / 8) = 5 ayahs/day
+        const reproBuilder = new PlanBuilder()
+            .setSchedule({
+                startDate: '2026-07-19',
+                daysPerWeek: 4
+            })
+            .planByDuration({
+                from: { surah: 2, ayah: 1 },
+                to: { surah: 2, ayah: 40 },
+                durationDays: 14,
+                unit: 'AYAHS'
+            })
+            .stopWhenCompleted();
+
+        expect(reproBuilder.getDerivedDailyAmount()).toEqual({ amount: 5, unit: 'AYAHS' });
+        const reproPlan = reproBuilder.build().generatePlan();
+        const reproMem = memorization(reproPlan);
+        expect(reproMem.length).toBeLessThanOrEqual(8);
+        expect(reproMem.reduce((sum, e) => sum + (e.data.ayahsCount ?? 0), 0)).toBe(40);
+        const startMs = new Date('2026-07-19').getTime();
+        const lastMs = reproPlan[reproPlan.length - 1].date.getTime();
+        const calendarSpanDays = Math.round((lastMs - startMs) / (1000 * 60 * 60 * 24)) + 1;
+        expect(calendarSpanDays).toBeLessThanOrEqual(14);
+
+        // Repro 2: With endDate set to the 14th calendar day (2026-08-01), AYAHS covers all 40 ayahs
+        const boundedPlan = new PlanBuilder()
+            .setSchedule({
+                startDate: '2026-07-19',
+                endDate: '2026-08-01',
+                daysPerWeek: 4
+            })
+            .planByDuration({
+                from: { surah: 2, ayah: 1 },
+                to: { surah: 2, ayah: 40 },
+                durationDays: 14,
+                unit: 'AYAHS'
+            })
+            .stopWhenCompleted()
+            .build()
+            .generatePlan();
+        const boundedMem = memorization(boundedPlan);
+        expect(boundedMem.reduce((sum, e) => sum + (e.data.ayahsCount ?? 0), 0)).toBe(40);
+        expect(boundedMem[boundedMem.length - 1].data.end).toMatchObject({ surah: 2, ayah: 40 });
+
+        // Parity across daysPerWeek (3, 4, 5, 7) with holidays, consolidationDayInterval, and catchUpDayOfWeek:
         // Range: Al-Baqarah 1..40 (40 ayahs).
-        // Duration: 10 generated study days.
-        // Consolidation interval: every 5th study day (days 5 and 10 are review-only -> 2 days).
-        // Holiday: '2026-04-01' (Day 1 is a holiday -> 1 day).
-        // Effective memorization days = 10 - 2 - 1 = 7 days.
-        // Derived N = ceil(40 / 7) = 6 ayahs/day.
+        // Duration: 10 calendar days at 7 days/week -> 10 study days.
+        // Consolidation interval: every 5th study day (days 5 and 10 -> 2 days).
+        // Holiday: '2026-04-01' (Day 1 -> 1 day).
+        // Effective memorization days = 10 - 2 - 1 = 7 days -> ceil(40 / 7) = 6 ayahs/day.
         const builder = new PlanBuilder()
             .setSchedule({
                 startDate: '2026-04-01',
@@ -316,6 +360,20 @@ describe('AYAHS daily amount mode', () => {
         expect(plan.length).toBeLessThanOrEqual(10);
         const hifzEvents = memorization(plan);
         expect(hifzEvents[hifzEvents.length - 1].data.end).toMatchObject({ surah: 2, ayah: 40 });
+
+        for (const dpw of [3, 4, 5, 7]) {
+            const expectedStudyDays = Math.max(1, Math.ceil((21 * dpw) / 7));
+            const b = new PlanBuilder()
+                .setSchedule({ startDate: '2026-04-01', daysPerWeek: dpw })
+                .planByDuration({
+                    from: { surah: 2, ayah: 1 },
+                    to: { surah: 2, ayah: 60 },
+                    durationDays: 21,
+                    unit: 'AYAHS'
+                })
+                .stopWhenCompleted();
+            expect(b.getDerivedDailyAmount()?.amount).toBe(Math.ceil(60 / expectedStudyDays));
+        }
     });
 
     it('8. sequentialSurahMode / strictSequentialMode parity on a multi-surah fixture', () => {

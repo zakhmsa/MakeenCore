@@ -109,27 +109,13 @@ export class PlanBuilder {
     }
 
     /**
-     * Counts effective memorization working days across `durationDays` generated study days,
-     * accounting for holidays, consolidation days, and catch-up days.
+     * Counts effective memorization working days within a `durationDays` calendar window,
+     * starting from `getStudyDaysWithinDuration(durationDays, schedule.daysPerWeek)` study days
+     * and subtracting holidays, consolidation days, and catch-up days.
      */
     private getEffectiveMemorizationDays(durationDays: number, schedule: ScheduleConfig): number {
-        if (durationDays <= 0) {
-            throw new PlanError(
-                PlanErrorCode.INVALID_INPUT,
-                Severity.ERROR,
-                'مدة الخطة يجب أن تكون أكبر من صفر.',
-                { durationDays }
-            );
-        }
-
-        if (schedule.daysPerWeek <= 0 || schedule.daysPerWeek > 7) {
-            throw new PlanError(
-                PlanErrorCode.INVALID_INPUT,
-                Severity.ERROR,
-                'عدد أيام الدراسة في الأسبوع يجب أن يكون بين 1 و 7.',
-                { daysPerWeek: schedule.daysPerWeek }
-            );
-        }
+        const studyDaysLimit = this.getStudyDaysWithinDuration(durationDays, schedule.daysPerWeek);
+        const endDateObj = schedule.endDate ? new Date(schedule.endDate) : null;
 
         let currentDate = new Date(schedule.startDate);
         while (!DateUtils.isWorkingDay(currentDate, schedule.daysPerWeek)) {
@@ -137,7 +123,9 @@ export class PlanBuilder {
         }
 
         let effectiveDays = 0;
-        for (let dayCounter = 1; dayCounter <= durationDays; dayCounter++) {
+        for (let dayCounter = 1; dayCounter <= studyDaysLimit; dayCounter++) {
+            if (endDateObj && currentDate > endDateObj) break;
+
             const dateStr = currentDate.toISOString().split('T')[0];
             const isHoliday = schedule.holidays?.includes(dateStr) ?? false;
             const isConsolidation =
