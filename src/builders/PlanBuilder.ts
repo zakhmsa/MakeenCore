@@ -277,17 +277,19 @@ export class PlanBuilder {
                     const startLocation = repo.getLocationFromIndex(cursor, directionData.index_map);
                     const stopLocation = repo.getLocationFromIndex(stopIdx, directionData.index_map);
                     if (stopLocation.surah !== startLocation.surah) {
-                        const surahEndAyah = direction ? 1 : repo.getAyahCount(startLocation.surah);
                         stopIdx = repo.getIndexFromLocation(
                             startLocation.surah,
-                            surahEndAyah,
+                            repo.getAyahCount(startLocation.surah),
                             direction
                         );
                     }
                 } else if (schedule.surahCompletion?.enabled || schedule.sequentialSurahMode) {
                     const stopLocation = repo.getLocationFromIndex(stopIdx, directionData.index_map);
-                    const surahEndAyah = direction ? 1 : repo.getAyahCount(stopLocation.surah);
-                    const surahEndIdx = repo.getIndexFromLocation(stopLocation.surah, surahEndAyah, direction);
+                    const surahEndIdx = repo.getIndexFromLocation(
+                        stopLocation.surah,
+                        repo.getAyahCount(stopLocation.surah),
+                        direction
+                    );
                     const remainingInSurah = surahEndIdx - stopIdx;
                     const maxOverflowAyahs = Math.max(0, schedule.surahCompletion?.maxOverflowAyahs ?? 2);
                     if (remainingInSurah > 0 && remainingInSurah <= maxOverflowAyahs) {
@@ -338,10 +340,9 @@ export class PlanBuilder {
                     const startLocation = repo.getLocationFromIndex(cursor, directionData.index_map);
                     const stopLocation = repo.getLocationFromIndex(stopIdx, directionData.index_map);
                     if (stopLocation.surah !== startLocation.surah) {
-                        const surahEndAyah = direction ? 1 : repo.getAyahCount(startLocation.surah);
                         stopIdx = repo.getIndexFromLocation(
                             startLocation.surah,
-                            surahEndAyah,
+                            repo.getAyahCount(startLocation.surah),
                             direction
                         );
                     }

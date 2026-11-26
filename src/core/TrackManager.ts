@@ -296,7 +296,7 @@ export class TrackManager {
                     const finalLines = this.quranRepo.getLinesBetween(candidate.start, ruleResult.approvedEnd, this.config.isReverse);
                     const ayahsCount = Math.abs(approvedIdx - rs.startIdx) + 1;
                     const completedByRule = (ruleResult.metadata?.appliedRule.includes('SurahCompletionRule') ?? false)
-                        && (ruleResult.approvedEnd.is_end || (this.config.isReverse && ruleResult.approvedEnd.ayah === 1));
+                        && ruleResult.approvedEnd.is_end;
                     
                     const step: typeof rs = {
                         ...rs,

@@ -36,12 +36,11 @@ export class SurahCompletionRule implements PlanningRule {
         if (currentEnd.surah !== candidate.start.surah) {
             // 🚫 STRICT MODE: Block ANY surah change until 100% complete
             if (context.strictSequentialMode) {
-                const startSurahEndAyah = candidate.isReverse
-                    ? 1
-                    : repo.getAyahCount(candidate.start.surah);
-                // Return to end of previous surah in traversal direction (forces completion on next day)
+                const prevSurahAyahCount = repo.getAyahCount(candidate.start.surah);
+                // Return to end of previous surah (in both FORWARD and REVERSE datasets,
+                // ayahs within a surah are ordered 1..ayahCount, so ayahCount is the surah's last index)
                 const forcedEnd = repo.getLocationFromIndex(
-                    repo.getIndexFromLocation(candidate.start.surah, startSurahEndAyah, candidate.isReverse),
+                    repo.getIndexFromLocation(candidate.start.surah, prevSurahAyahCount, candidate.isReverse),
                     dirData.index_map
                 );
                 return {
@@ -49,7 +48,7 @@ export class SurahCompletionRule implements PlanningRule {
                     metadata: {
                         appliedRule: this.name,
                         reason: `STRICT MODE: Cannot start Surah ${currentEnd.surah} until Surah ${candidate.start.surah} is 100% complete`,
-                        adjustmentLines: -repo.getLinesBetween(forcedEnd, currentEnd, candidate.isReverse)
+                        adjustmentLines: repo.getLinesBetween(currentEnd, forcedEnd, candidate.isReverse)
                     }
                 };
             }
@@ -62,19 +61,18 @@ export class SurahCompletionRule implements PlanningRule {
             return { approvedEnd: currentEnd };
         }
 
-        // We're still in same surah - check if we should complete it in traversal direction
-        const targetSurahEndAyah = candidate.isReverse ? 1 : repo.getAyahCount(currentEnd.surah);
-        const currentEndIdx = repo.getIndexFromLocation(currentEnd.surah, currentEnd.ayah, candidate.isReverse);
-        const surahEndIdx = repo.getIndexFromLocation(currentEnd.surah, targetSurahEndAyah, candidate.isReverse);
-
-        // If already at surah end in traversal direction, no action needed
-        if (currentEndIdx >= surahEndIdx) {
+        // We're still in same surah - check if we should complete it
+        const ayahCount = repo.getAyahCount(currentEnd.surah);
+        
+        // If already at surah end, no action needed
+        if (currentEnd.ayah >= ayahCount) {
             return { approvedEnd: currentEnd };
         }
 
-        const remainingAyahs = surahEndIdx - currentEndIdx;
+        const remainingAyahs = ayahCount - currentEnd.ayah;
 
         if (remainingAyahs > 0) {
+            const surahEndIdx = repo.getIndexFromLocation(currentEnd.surah, ayahCount, candidate.isReverse);
             const newEndLoc = repo.getLocationFromIndex(surahEndIdx, dirData.index_map);
 
             if (candidate.unit === 'AYAHS') {
