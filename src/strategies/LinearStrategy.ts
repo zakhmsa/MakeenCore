@@ -8,7 +8,8 @@ import { LinearTrackConfig } from '../builders/PlanTypes';
  * LinearStrategy
  * * Simple forward progression (used for new Hifz).
  * Moves by fixed amount each day until completion.
- * * 🚀 UPDATED: Handles optional 'End Index' and prevents overshoot.
+ * * 🚀 UPDATED: Supports both 'LINES' (default) and 'AYAHS' daily amount units,
+ *   plus optional 'End Index' and overshoot protection.
  */
 export class LinearStrategy implements IMovementStrategy {
     calculateNextStep(
@@ -17,6 +18,7 @@ export class LinearStrategy implements IMovementStrategy {
         config: LinearTrackConfig
     ): StepResult {
         const currentIdx = state.currentIdx;
+        const unit = config.unit ?? 'LINES';
         
         // 1. Determine Effective Limit (The "Ceiling")
         // It's either the user-defined endIdx OR the absolute end of the Quran.
@@ -25,46 +27,57 @@ export class LinearStrategy implements IMovementStrategy {
         
         // Safety clamp to ensure we never look beyond array bounds
         const effectiveMax = Math.min(targetMax, globalMax);
-
-        // 2. Calculate Target Cumulative Value
         const currentCum = currentIdx > 0 ? context.cumulativeArray[currentIdx - 1] : 0;
-        const targetCum = currentCum + config.amount;
 
-        // 3. Find Stop Index using Exponential Search (O(log n))
-        // We limit the search range to 'effectiveMax' to optimize performance.
-        let stopIdx = findExponentialStopIndex(
-            context.cumulativeArray,
-            targetCum,
-            currentIdx,
-            effectiveMax
-        );
+        let stopIdx: number;
 
-        // Float32 prefix sums can sit microscopically below an exact line
-        // boundary (for example 7.99997 instead of 8). Normalize using the same
-        // two-decimal precision exposed by the engine so an unnecessary extra
-        // ayah is never selected.
-        while (stopIdx > currentIdx) {
-            const previousLines = Number(
-                (context.cumulativeArray[stopIdx - 1] - currentCum).toFixed(2)
+        if (unit === 'AYAHS') {
+            // In AYAHS mode, each array index represents one canonical whole ayah.
+            // Taking N ayahs starting at currentIdx stops at currentIdx + N - 1,
+            // clamped to effectiveMax.
+            stopIdx = Math.min(currentIdx + config.amount - 1, effectiveMax);
+        } else {
+            // 2. Calculate Target Cumulative Value (LINES mode)
+            const targetCum = currentCum + config.amount;
+
+            // 3. Find Stop Index using Exponential Search (O(log n))
+            // We limit the search range to 'effectiveMax' to optimize performance.
+            stopIdx = findExponentialStopIndex(
+                context.cumulativeArray,
+                targetCum,
+                currentIdx,
+                effectiveMax
             );
-            if (previousLines < config.amount) break;
-            stopIdx--;
+
+            // Float32 prefix sums can sit microscopically below an exact line
+            // boundary (for example 7.99997 instead of 8). Normalize using the same
+            // two-decimal precision exposed by the engine so an unnecessary extra
+            // ayah is never selected.
+            while (stopIdx > currentIdx) {
+                const previousLines = Number(
+                    (context.cumulativeArray[stopIdx - 1] - currentCum).toFixed(2)
+                );
+                if (previousLines < config.amount) break;
+                stopIdx--;
+            }
+
+            // 4. 🛡️ OVERSHOOT PROTECTION (Edge Case Handling)
+            if (stopIdx >= effectiveMax) {
+                stopIdx = effectiveMax;
+            }
         }
 
-        // 4. 🛡️ OVERSHOOT PROTECTION (Edge Case Handling)
-        // If the calculated step goes beyond the user's defined end,
-        // we clamp it exactly to the end index.
-        if (stopIdx >= effectiveMax) {
-            stopIdx = effectiveMax;
-        }
+        const linesProcessed = parseFloat((context.cumulativeArray[stopIdx] - currentCum).toFixed(2));
 
         const result: StepResult = {
             startIdx: currentIdx,
             endIdx: stopIdx,
             start: context.quranRepo.getLocationFromIndex(currentIdx, context.indexMap),
             end: context.quranRepo.getLocationFromIndex(stopIdx, context.indexMap),
-            linesProcessed: parseFloat((context.cumulativeArray[stopIdx] - currentCum).toFixed(2)),
-            requestedLines: config.amount,
+            linesProcessed,
+            unit,
+            requestedLines: unit === 'LINES' ? config.amount : undefined,
+            requestedAyahs: unit === 'AYAHS' ? config.amount : undefined,
             flags: ['memorization'] // Mark as memorization for rule pipeline
         };
 

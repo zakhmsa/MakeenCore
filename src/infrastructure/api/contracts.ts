@@ -18,7 +18,7 @@ export interface CreatePlanPreviewRequestDTO {
 export interface TrackConfigDTO {
     type: TrackType;
     priority: number;
-    amountUnit: 'LINES' | 'PAGES' | 'LESSONS' | 'CUSTOM';
+    amountUnit: 'LINES' | 'PAGES' | 'AYAHS' | 'LESSONS' | 'CUSTOM';
     amountValue: number;
     start?: LocationDTO;
     end?: LocationDTO;
@@ -36,9 +36,15 @@ export interface PlanEventDTO {
     start: LocationDTO;
     end: LocationDTO;
     linesCount: number;
+    /** Count of whole ayahs from start to end inclusive. */
+    ayahsCount?: number;
     appliedRules?: string[];
     requestedLines?: number;
     overflowLines?: number;
+    /** Configured daily ayah target (present when Hifz uses amountUnit: 'AYAHS'). */
+    requestedAyahs?: number;
+    /** Extra ayahs above requestedAyahs (present when Hifz uses amountUnit: 'AYAHS'). */
+    overflowAyahs?: number;
     overflowReason?: 'AYAH_INTEGRITY' | 'SURAH_COMPLETION';
 }
 

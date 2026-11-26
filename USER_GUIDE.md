@@ -10,20 +10,25 @@ Use `MakeenEngine.generatePlan(...)` when your application already has track DTO
 
 Hifz moves linearly from `from` to `to` in the selected direction. It always emits complete ayahs.
 
-### Daily capacity
+You can express the daily Hifz capacity in either:
+1. **Canonical mushaf lines (`LINES`, default)** — or pages (`PAGES`, converted at 15 lines/page), or
+2. **Whole ayahs (`AYAHS`)** — for teachers who assign a fixed number of verses per day (e.g. "5 ayahs/day").
+
+### 1. Line-based daily capacity (`LINES` mode)
 
 `dailyLines` is a daily capacity, not a loose target. The raw lesson stops at the first whole-ayah boundary that meets the capacity. An actual lesson can exceed it only when:
 
 1. the final indivisible ayah crosses the boundary (`AYAH_INTEGRITY`), or
 2. the teacher explicitly allows a small surah-completion overage (`SURAH_COMPLETION`).
 
-`maxAyahPerDay` is a separate hard cap. If eight short ayahs occupy only three lines, a configured eight-ayah cap stops the lesson at three lines.
+`maxAyahPerDay` is a separate hard cap in `LINES` mode. If eight short ayahs occupy only three lines, a configured eight-ayah cap stops the lesson at three lines.
 
-Each memorization event exposes:
+Each line-mode memorization event exposes:
 
 ```ts
 {
-  lines: 8.5,                 // actual canonical amount
+  lines: 8.5,                 // actual canonical line amount
+  ayahsCount: 6,              // count of whole ayahs from start to end inclusive
   requestedLines: 8,
   overflowLines: 0.5,
   overflowReason: 'AYAH_INTEGRITY',
@@ -31,17 +36,86 @@ Each memorization event exposes:
 }
 ```
 
+### 2. Ayah-count daily capacity (`AYAHS` mode)
+
+> **Why you should never use `dailyLines: 999` + `maxAyahPerDay: N`:**  
+> Faking ayah-based plans by passing an inflated line target and relying on `maxAyahPerDay` is an anti-pattern: it distorts duration mode, breaks line-based surah completion, and reports misleading `requestedLines`. Always use the first-class `AYAHS` unit instead.
+
+In `AYAHS` mode, each lesson takes `N` whole ayahs from the current position in the plan direction (`FORWARD` or `REVERSE`). The last lesson before `to` takes only the remaining ayahs and never crosses `to`. Line-based soft alignment rules (`PageAlignmentRule`, `ThematicHaltingRule`, `BalanceCorrectionRule`, `SurahSnapRule`) do not run in `AYAHS` mode so your exact ayah count is never altered.
+
+#### Builder example (`AYAHS`)
+
+```ts
+import { PlanBuilder, WindowMode } from '@zakhm_sa/makeen-core';
+
+const plan = new PlanBuilder()
+  .setSchedule({
+    startDate: '2026-04-01',
+    daysPerWeek: 5,
+    isReverse: false,
+    surahCompletion: {
+      enabled: true,
+      maxOverflowAyahs: 2 // finish surah if <= 2 ayahs remain (default: 2)
+    },
+    maxLinesPerDay: 15    // optional line guard so N long ayahs don't exceed 15 lines
+  })
+  .addHifz(5, { surah: 2, ayah: 1 }, { surah: 2, ayah: 20 }, { unit: 'AYAHS' })
+  // Or: .addHifzByAyahs(5, { surah: 2, ayah: 1 }, { surah: 2, ayah: 20 })
+  // Or: .planByDailyAyahs({ from: { surah: 2, ayah: 1 }, to: { surah: 2, ayah: 20 }, dailyAyahs: 5 })
+  // Or: .planByDuration({ from: { surah: 2, ayah: 1 }, to: { surah: 2, ayah: 40 }, durationDays: 10, unit: 'AYAHS' })
+  .addMinorReview(3, WindowMode.GRADUAL)
+  .stopWhenCompleted()
+  .build()
+  .generatePlan();
+```
+
+#### DTO example (`amountUnit: 'AYAHS'`)
+
+```ts
+import { MakeenEngine } from '@zakhm_sa/makeen-core';
+
+const result = MakeenEngine.generatePlan({
+  name: '5 Ayahs Per Day',
+  startDate: '2026-04-01',
+  direction: 'FORWARD',
+  daysPerWeek: 5,
+  tracks: [
+    {
+      type: 'HIFZ',
+      priority: 1,
+      amountUnit: 'AYAHS',
+      amountValue: 5,
+      start: { surah: 2, ayah: 1 },
+      end: { surah: 2, ayah: 20 },
+      config: {
+        surahCompletion: { enabled: true, maxOverflowAyahs: 2 },
+        maxLinesPerDay: 15
+      }
+    }
+  ]
+});
+```
+
+#### `AYAHS` mode rules and output
+
+- **Output fields:** Every event (memorization and review, in both `LINES` and `AYAHS` modes) includes `ayahsCount: number` alongside `lines` / `linesCount`. In `AYAHS` mode, Hifz events also include `requestedAyahs` and `overflowAyahs`.
+- **Surah completion (`maxOverflowAyahs`):** In `AYAHS` mode, `surahCompletion` checks whether the remaining ayahs in the current surah are `<= maxOverflowAyahs` (default `2`). When it completes the surah, it sets `overflowAyahs` and `overflowReason: 'SURAH_COMPLETION'`. `maxOverflowLines` is ignored in `AYAHS` mode.
+- **`maxAyahPerDay` conflict rule:** In `AYAHS` mode the unit itself is the ayah cap. Passing `maxAyahPerDay < dailyAyahs` throws a `PlanError(INVALID_INPUT)` rather than silently clamping.
+- **Optional line guard (`maxLinesPerDay`):** When set in `AYAHS` mode, caps the lesson at the last whole ayah that fits within `maxLinesPerDay` (minimum **1 whole ayah** — never an empty lesson, even if a single ayah like `2:282` exceeds `maxLinesPerDay`) and records `'LINE_GUARD'` in `appliedRules`.
+- **Reviews stay line/page/lesson-based:** `AYAHS` is only valid on `HIFZ`. Passing `amountUnit: 'AYAHS'` on `MINOR_REVIEW` or `MAJOR_REVIEW` is rejected with an error.
+
 ### Capacity-aware surah completion
 
 ```ts
 surahCompletion: {
   enabled: true,
-  maxOverflowLines: 2,
+  maxOverflowLines: 2, // used in LINES mode (default: 2)
+  maxOverflowAyahs: 2, // used in AYAHS mode (default: 2)
   mayExceedMaxAyahs: false
 }
 ```
 
-The engine measures the remaining portion in lines. If completing the surah would exceed the configured allowance, the remainder moves to the next memorization day. New integrations should use this object. `sequentialSurahMode` remains only as a compatibility alias.
+In `LINES` mode, the engine measures the remaining portion in lines (`maxOverflowLines`). In `AYAHS` mode, it measures the remaining portion in whole ayahs (`maxOverflowAyahs`). If completing the surah would exceed the configured allowance, the remainder moves to the next memorization day. New integrations should use this object. `sequentialSurahMode` remains only as a compatibility alias.
 
 `strictSequentialMode` prevents a raw lesson from crossing into the next surah; it does not disable the final hard limits.
 
@@ -55,6 +129,7 @@ Minor review is a moving window over completed Hifz history.
 - A lesson crossing a surah boundary is clipped to the active surah.
 - `GRADUAL` grows from available history.
 - `FIXED` targets a fixed number of completed lessons; the legacy unbounded strategy can fill missing history from pre-plan material.
+- Works identically whether Hifz lessons were planned in `LINES` or `AYAHS` (history stores canonical `{ startIdx, endIdx }` boundaries).
 
 ### Pages versus lessons
 
@@ -84,7 +159,7 @@ With the default surah-bounded strategy, both modes remain restricted to the act
 
 ## Major and independent review
 
-`addMajorReview` creates a stateful looping track. It advances by its own daily amount and resets automatically when it reaches its wall or explicit end.
+`addMajorReview` creates a stateful looping track. It advances by its own daily line amount and resets automatically when it reaches its wall or explicit end.
 
 ```ts
 builder.addMajorReview(
@@ -144,8 +219,8 @@ Always give a review-only plan `limitDays` or `endDate`; there is no Hifz comple
 
 ### Directional planning
 
-- Forward: `isReverse: false`, or DTO `direction: ''FORWARD''`, traverses Al-Fatiha toward An-Nas.
-- Reverse: `isReverse: true`, or DTO `direction: ''REVERSE''`, traverses An-Nas toward Al-Fatiha.
+- Forward: `isReverse: false`, or DTO `direction: 'FORWARD'`, traverses Al-Fatiha toward An-Nas.
+- Reverse: `isReverse: true`, or DTO `direction: 'REVERSE'`, traverses An-Nas toward Al-Fatiha.
 - `from` and `to` must follow the selected traversal order.
 - Hifz, looping review, walls, horizons, and Quran boundary rules all use the selected directional index.
 
@@ -155,7 +230,7 @@ Always give a review-only plan `limitDays` or `endDate`; there is no Hifz comple
 
 ## Planning modes
 
-### By daily amount
+### By daily amount (`LINES` or `AYAHS`)
 
 ```ts
 const manager = new PlanBuilder()
@@ -164,28 +239,32 @@ const manager = new PlanBuilder()
     from: { surah: 2, ayah: 1 },
     to: { surah: 2, ayah: 286 },
     dailyLines: 8
+    // Or: dailyAyahs: 5, unit: 'AYAHS' (or call .planByDailyAyahs({ from, to, dailyAyahs: 5 }))
   })
   .stopWhenCompleted()
   .build();
 ```
 
-The derived horizon partitions the canonical range using both daily lines and `maxAyahPerDay`, then accounts for consolidation days.
+The derived horizon partitions the canonical range using the active unit's constraints, then accounts for consolidation days.
 
-### By duration
+### By duration (`LINES` or `AYAHS`)
 
 ```ts
-const manager = new PlanBuilder()
+const builder = new PlanBuilder()
   .setSchedule({ startDate: '2026-07-18', daysPerWeek: 5 })
   .planByDuration({
     from: { surah: 2, ayah: 1 },
     to: { surah: 2, ayah: 100 },
-    durationDays: 60
+    durationDays: 60,
+    unit: 'AYAHS' // optional: 'LINES' (default) | 'AYAHS'
   })
-  .stopWhenCompleted()
-  .build();
+  .stopWhenCompleted();
+
+const derived = builder.getDerivedDailyAmount(); // { amount: N, unit: 'AYAHS' }
+const manager = builder.build();
 ```
 
-This mode derives the daily line amount from the requested duration. Hard ayah limits and consolidation days can reduce actual daily progress, so choose compatible constraints.
+With `unit: 'LINES'` (default), this mode derives the daily line amount from the requested duration. With `unit: 'AYAHS'`, it derives `dailyAyahs = ceil(totalAyahsInRange / effectiveWorkingDays)` after accounting for consolidation days, holidays, and catch-up days.
 
 ## DTO facade
 
@@ -222,7 +301,7 @@ const result = MakeenEngine.generatePlan({
 });
 ```
 
-The facade accepts Hifz pedagogical settings in the Hifz track's `config`. A minor-review `PAGES` amount is converted to an exact 15-line-per-page window. Hifz/major `PAGES` amounts are converted to daily lines.
+The facade accepts Hifz pedagogical settings in the Hifz track's `config`. A minor-review `PAGES` amount is converted to an exact 15-line-per-page window. Hifz/major `PAGES` amounts are converted to daily lines. `amountUnit: 'AYAHS'` is supported on `HIFZ` tracks only.
 
 ## Snapshot and resume
 
@@ -281,6 +360,7 @@ A NestJS application can reasonably split these responsibilities into preview/ge
 
 - `README.md` / `README.ar.md`: quick start.
 - `llms.txt`: compact AI-oriented usage contract.
+- `CHANGELOG.md`: version history.
 - `doc/planning-engine/planning-engine-api-contracts.md`: exact public shapes.
 - `doc/planning-engine/pedagogical-rules-guide.md`: rule scopes and interaction.
 - `doc/planning-engine/planning-modes-and-phases.md`: execution phases, scenarios, milestones, and limitations.

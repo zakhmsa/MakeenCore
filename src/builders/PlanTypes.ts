@@ -16,6 +16,13 @@ export type PlanMode = 'NONE' | 'HIFZ_ECOSYSTEM' | 'WERD_ECOSYSTEM';
 export type TrackRequestType = 'HIFZ' | 'MINOR_REVIEW' | 'MAJOR_REVIEW';
 
 /**
+ * Daily amount unit for new memorization (Hifz).
+ * - 'LINES': canonical mushaf lines (default)
+ * - 'AYAHS': count of whole ayahs
+ */
+export type HifzAmountUnit = 'LINES' | 'AYAHS';
+
+/**
  * Internal request object for deferred execution pattern.
  */
 export interface TrackRequest {
@@ -38,15 +45,31 @@ export interface CompletionByDurationConfig {
     from: LocationConfig;
     to: LocationConfig;
     durationDays: number;
+    /** Unit used to derive the daily amount from the range. Default: 'LINES'. */
+    unit?: HifzAmountUnit;
 }
 
 /**
- * Configuration for completion by daily amount.
+ * Configuration for completion by daily amount (lines or ayahs).
  */
 export interface CompletionByDailyAmountConfig {
     from: LocationConfig;
     to: LocationConfig;
-    dailyLines: number;
+    /** Daily capacity in mushaf lines (when unit is 'LINES' or omitted). */
+    dailyLines?: number;
+    /** Daily capacity in whole ayahs (shorthand for unit: 'AYAHS'). */
+    dailyAyahs?: number;
+    /** Explicit unit selector when passing dailyLines or dailyAyahs. */
+    unit?: HifzAmountUnit;
+}
+
+/**
+ * Explicit ayah-based daily amount configuration (alias for clarity).
+ */
+export interface CompletionByDailyAyahsConfig {
+    from: LocationConfig;
+    to: LocationConfig;
+    dailyAyahs: number;
 }
 
 /**
@@ -62,11 +85,22 @@ export interface ScheduleConfig {
     holidays?: string[];       // Exact YYYY-MM-DD off days
     
     // PEDAGOGICAL CONSTRAINTS (for human-optimized planning)
-    /** Maximum ayahs per day (default: 10, recommended: 5-15) */
+    /**
+     * Maximum ayahs per day in LINES mode (default: 10, recommended: 5-15).
+     * In AYAHS mode, the daily ayah amount itself is the ayah cap; passing a smaller
+     * maxAyahPerDay than dailyAyahs throws an INVALID_INPUT PlanError.
+     */
     maxAyahPerDay?: number;
+    /**
+     * Optional hard line cap per day in AYAHS mode.
+     * Prevents N very long ayahs from producing an oversized lesson; stops at the
+     * last whole ayah that fits (minimum 1 ayah — never emits an empty lesson)
+     * and records 'LINE_GUARD' in appliedRules.
+     */
+    maxLinesPerDay?: number;
     /** Complete surah before jumping to next (default: false) */
     sequentialSurahMode?: boolean;
-    /** Capacity-aware surah completion measured in mushaf lines. */
+    /** Capacity-aware surah completion measured in mushaf lines (LINES mode) or ayahs (AYAHS mode). */
     surahCompletion?: SurahCompletionConfig;
     /** Every N days, take a consolidation day (no new hifz, only review) */
     consolidationDayInterval?: number;
@@ -110,18 +144,21 @@ export interface BuilderContext {
 
 /**
  * 🚀 NEW: Configuration interface for Linear Strategy
- * Explicitly defines that a track can have an optional end boundary.
+ * Explicitly defines that a track can have an optional end boundary and unit.
  */
 export interface LinearTrackConfig {
     amount: number;
+    unit?: HifzAmountUnit;
     endIdx?: number; // Optional: If undefined, runs to end of Quran
 }
 
 /** Optional, capacity-aware preference for finishing the current surah. */
 export interface SurahCompletionConfig {
     enabled: boolean;
-    /** Maximum optional overflow above the daily line limit. Default: 2 lines. */
+    /** Maximum optional overflow above the daily line limit in LINES mode. Default: 2 lines. Ignored in AYAHS mode. */
     maxOverflowLines?: number;
-    /** Whether surah completion may also exceed maxAyahPerDay. Default: false. */
+    /** Maximum optional overflow above the daily ayah limit in AYAHS mode. Default: 2 ayahs. */
+    maxOverflowAyahs?: number;
+    /** Whether surah completion may also exceed maxAyahPerDay in LINES mode. Default: false. */
     mayExceedMaxAyahs?: boolean;
 }

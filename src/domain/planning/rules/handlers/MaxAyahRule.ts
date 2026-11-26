@@ -6,8 +6,9 @@ import { PlanningRule, RuleCandidate, RuleContext, RuleResult } from '../RuleInt
  * Enforces pedagogical constraint: maximum ayahs per day.
  * Prevents cognitive overload by limiting daily memorization chunks.
  * 
- * Default: 10 ayahs (based on educational research)
- * Recommended range: 5-15 ayahs depending on student capacity
+ * Default: 10 ayahs in LINES mode (based on educational research).
+ * In AYAHS mode, the unit itself is the ayah cap; if an explicit maxAyahPerDay
+ * is configured without surah-completion exception, it still acts as an upper bound.
  */
 export class MaxAyahRule implements PlanningRule {
     name = 'MaxAyahRule';
@@ -20,6 +21,18 @@ export class MaxAyahRule implements PlanningRule {
             return { approvedEnd: candidate.proposedEnd };
         }
 
+        if (candidate.unit === 'AYAHS') {
+            // In AYAHS mode, the unit itself is the daily ayah cap (validated at setup so maxAyahPerDay >= targetAyahs).
+            // If surah completion granted an overflow, allow it unless maxAyahPerDay was explicitly set smaller than
+            // the completed ayah count AND surahCompletionMayExceedMaxAyahs is explicitly false.
+            if (context.maxAyahPerDay === undefined) {
+                return { approvedEnd: candidate.proposedEnd };
+            }
+            if (candidate.permittedOverflowEnd && context.surahCompletionMayExceedMaxAyahs !== false) {
+                return { approvedEnd: candidate.proposedEnd };
+            }
+        }
+
         const repo = context.repository;
         const currentEnd = candidate.proposedEnd;
         
@@ -27,7 +40,7 @@ export class MaxAyahRule implements PlanningRule {
         const maxAyah = context.maxAyahPerDay ?? 10;
 
         // A teacher may explicitly allow the capacity-aware surah-completion
-        // exception to override the ayah cap. It never happens implicitly.
+        // exception to override the ayah cap. It never happens implicitly in LINES mode.
         if (candidate.permittedOverflowEnd && context.surahCompletionMayExceedMaxAyahs) {
             return { approvedEnd: currentEnd };
         }
@@ -44,7 +57,7 @@ export class MaxAyahRule implements PlanningRule {
             candidate.isReverse
         );
 
-        // Count ayahs (simple index difference in forward direction)
+        // Count ayahs (simple index difference in direction)
         const ayahCount = Math.abs(endIdx - startIdx) + 1;
 
         // If within limit, no adjustment needed
@@ -54,9 +67,7 @@ export class MaxAyahRule implements PlanningRule {
 
         // Need to truncate to max ayah limit
         // Find the ayah at maxAyah distance from start
-        const targetIdx = candidate.isReverse 
-            ? startIdx + maxAyah - 1  // Reverse: higher index = further back
-            : startIdx + maxAyah - 1; // Forward: higher index = further ahead
+        const targetIdx = startIdx + maxAyah - 1;
 
         // Clamp to valid range
         const clampedIdx = Math.min(

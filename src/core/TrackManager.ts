@@ -19,6 +19,7 @@ import { BalanceCorrectionRule, ThematicHaltingRule } from '../domain/planning/r
 import { ReferenceRepository } from '../domain/mushaf/repositories/ReferenceRepository';
 import { LoadBalancerService } from '../domain/planning/services/LoadBalancerService';
 import { DailyLoadWeights, TrackDefinition, TrackType } from '../domain/planning/entities/PlanConfig';
+import { HifzAmountUnit } from '../builders/PlanTypes';
 
 export interface ManagerConfig {
     startDate: string;
@@ -30,12 +31,16 @@ export interface ManagerConfig {
     holidays?: string[];       // Epic 3: 'YYYY-MM-DD'
     // Pedagogical constraints
     maxAyahPerDay?: number;
+    maxLinesPerDay?: number;
     sequentialSurahMode?: boolean;
     strictSequentialMode?: boolean;      // If true, never jump surah until 100% complete
     surahCompletionMaxOverflowLines?: number;
+    surahCompletionMaxOverflowAyahs?: number;
     surahCompletionMayExceedMaxAyahs?: boolean;
     consolidationDayInterval?: number; // Every N days, no new hifz (only review)
     includeHijri?: boolean;            // Opt-in: attach a Hijri (Umm al-Qura) date to each PlanDay
+    derivedDailyAmount?: number;
+    derivedDailyUnit?: HifzAmountUnit;
 }
 
 export type StopCondition = (tracks: Map<number, ITrack>) => boolean;
@@ -73,6 +78,19 @@ export class TrackManager {
             new MaxAyahRule(),
             new MaxLinesRule()        // Always last: no soft rule may bypass line capacity
         ]);
+    }
+
+    /**
+     * Exposes the daily amount derived by `planByDuration` (if duration mode was used).
+     */
+    public getDerivedDailyAmount(): { amount: number; unit: HifzAmountUnit } | undefined {
+        if (this.config.derivedDailyAmount === undefined || this.config.derivedDailyUnit === undefined) {
+            return undefined;
+        }
+        return {
+            amount: this.config.derivedDailyAmount,
+            unit: this.config.derivedDailyUnit
+        };
     }
 
     addTrack(track: ITrack) {
@@ -244,11 +262,14 @@ export class TrackManager {
                 const rawSteps = Array.isArray(rawStep) ? rawStep : (rawStep ? [rawStep] : []);
 
                 for (const rs of rawSteps) {
+                    const stepUnit: HifzAmountUnit = rs.unit ?? 'LINES';
                     // Epic 2: Pass candidate through rule pipeline
                     const candidate: RuleCandidate = {
                         start: rs.start,
                         proposedEnd: rs.end,
                         targetLines: rs.requestedLines ?? rs.linesProcessed,
+                        unit: stepUnit,
+                        targetAyahs: rs.requestedAyahs,
                         isReverse: this.config.isReverse,
                         flags: rs.flags,
                         lineLimitEnd: rs.end
@@ -260,9 +281,11 @@ export class TrackManager {
                         snapThresholdLines: 7, // default threshold
                         // 🧠 Pedagogical constraints
                         maxAyahPerDay: this.config.maxAyahPerDay,
+                        maxLinesPerDay: this.config.maxLinesPerDay,
                         sequentialSurahMode: this.config.sequentialSurahMode,
                         strictSequentialMode: this.config.strictSequentialMode,
                         surahCompletionMaxOverflowLines: this.config.surahCompletionMaxOverflowLines,
+                        surahCompletionMaxOverflowAyahs: this.config.surahCompletionMaxOverflowAyahs,
                         surahCompletionMayExceedMaxAyahs: this.config.surahCompletionMayExceedMaxAyahs
                     };
 
@@ -271,9 +294,9 @@ export class TrackManager {
                     // Rebuild step with approved end
                     const approvedIdx = this.quranRepo.getIndexFromLocation(ruleResult.approvedEnd.surah, ruleResult.approvedEnd.ayah, this.config.isReverse);
                     const finalLines = this.quranRepo.getLinesBetween(candidate.start, ruleResult.approvedEnd, this.config.isReverse);
-                    const overflowLines = Math.max(0, Number((finalLines - candidate.targetLines).toFixed(2)));
+                    const ayahsCount = Math.abs(approvedIdx - rs.startIdx) + 1;
                     const completedByRule = (ruleResult.metadata?.appliedRule.includes('SurahCompletionRule') ?? false)
-                        && ruleResult.approvedEnd.is_end;
+                        && (ruleResult.approvedEnd.is_end || (this.config.isReverse && ruleResult.approvedEnd.ayah === 1));
                     
                     const step: typeof rs = {
                         ...rs,
@@ -288,8 +311,16 @@ export class TrackManager {
                     };
 
                     // 🛡️ Guard: If RuleEngine truncated the step, it might not be completed yet!
+                    // Conversely, if SurahCompletionRule expanded the step to reach/pass the track's endIdx,
+                    // mark it completed so the track stops cleanly.
+                    const trackEndIdx = (track as any).config?.endIdx ?? (dirData.cumulative_array.length - 1);
                     if (approvedIdx < rs.endIdx && step.flags) {
                         step.flags = step.flags.filter(f => f !== 'completed');
+                    } else if (approvedIdx >= trackEndIdx && track.type === 'linear') {
+                        step.flags = step.flags ?? [];
+                        if (!step.flags.includes('completed')) {
+                            step.flags.push('completed');
+                        }
                     }
 
                     track.commitStep(step, currentDate);
@@ -303,6 +334,23 @@ export class TrackManager {
                     let eStart = step.start;
                     let eEnd = step.end;
 
+                    const isLinearAyahs = track.type === 'linear' && stepUnit === 'AYAHS';
+                    const isLinearLines = track.type === 'linear' && stepUnit === 'LINES';
+                    const overflowLines = isLinearLines
+                        ? Math.max(0, Number((finalLines - candidate.targetLines).toFixed(2)))
+                        : undefined;
+                    const requestedAyahs = isLinearAyahs ? rs.requestedAyahs : undefined;
+                    const overflowAyahs = isLinearAyahs && requestedAyahs !== undefined
+                        ? Math.max(0, ayahsCount - requestedAyahs)
+                        : undefined;
+
+                    let overflowReason: 'AYAH_INTEGRITY' | 'SURAH_COMPLETION' | undefined = undefined;
+                    if (isLinearLines && overflowLines !== undefined && overflowLines > 0) {
+                        overflowReason = completedByRule ? 'SURAH_COMPLETION' : 'AYAH_INTEGRITY';
+                    } else if (isLinearAyahs && overflowAyahs !== undefined && overflowAyahs > 0 && completedByRule) {
+                        overflowReason = 'SURAH_COMPLETION';
+                    }
+
                     const event: PlanEvent = {
                         trackId: track.id,
                         trackName: track.name,
@@ -311,11 +359,17 @@ export class TrackManager {
                             start: eStart,
                             end: eEnd,
                             lines: step.linesProcessed,
-                            requestedLines: track.type === 'linear' ? candidate.targetLines : undefined,
-                            overflowLines: track.type === 'linear' ? overflowLines : undefined,
-                            overflowReason: track.type === 'linear' && overflowLines > 0
-                                ? (completedByRule ? 'SURAH_COMPLETION' : 'AYAH_INTEGRITY')
-                                : undefined,
+                            ayahsCount,
+                            ...(isLinearLines ? {
+                                requestedLines: candidate.targetLines,
+                                overflowLines,
+                                ...(overflowReason ? { overflowReason } : {})
+                            } : {}),
+                            ...(isLinearAyahs ? {
+                                requestedAyahs,
+                                overflowAyahs,
+                                ...(overflowReason ? { overflowReason } : {})
+                            } : {}),
                             appliedRules: step.appliedRules,
                             is_reset: step.flags?.includes('reset')
                         }

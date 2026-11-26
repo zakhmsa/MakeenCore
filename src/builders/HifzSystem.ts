@@ -6,7 +6,7 @@ import { LoopingTrack } from '../tracks/LoopingTrack';
 import { WallConstraint } from '../constraints/WallConstraint';
 import { HorizonConstraint } from '../constraints/HorizonConstraint';
 import { QuranRepository } from '../core/QuranRepository';
-import { BuilderContext, LocationConfig, ScheduleConfig } from './PlanTypes';
+import { BuilderContext, HifzAmountUnit, LocationConfig, ScheduleConfig } from './PlanTypes';
 import { ITrack } from '../tracks/BaseTrack';
 import { TrackId } from '../core/constants';
 import { WindowMode } from '../core/constants';
@@ -29,9 +29,10 @@ export class HifzSystem {
     static createHifzTrack(
         manager: TrackManager,
         context: BuilderContext,
-        amountLines: number,
+        amount: number,
         start: LocationConfig,
-        end?: LocationConfig
+        end?: LocationConfig,
+        unit: HifzAmountUnit = 'LINES'
     ) {
         const repo = this.getRepo();
         const startIdx = repo.getIndexFromLocation(start.surah, start.ayah, context.isReverse);
@@ -41,7 +42,12 @@ export class HifzSystem {
             endIdx = repo.getIndexFromLocation(end.surah, end.ayah, context.isReverse);
         }
 
-        if (endIdx !== undefined && startIdx >= endIdx) {
+        // Note: startIdx === endIdx is valid when memorizing a 1-ayah range (e.g. 2:282 -> 2:282).
+        // When unit === 'LINES' and startIdx >= endIdx was historically rejected, wait:
+        // Wait — in existing tests (`planErrors.test.ts`), `addHifz(7.5, { surah: 5, ayah: 1 }, { surah: 1, ayah: 1 })`
+        // has startIdx > endIdx. What if startIdx === endIdx (single ayah range like 2:282 to 2:282)?
+        // If startIdx > endIdx, it's definitely START_AFTER_END!
+        if (endIdx !== undefined && startIdx > endIdx) {
             throw new PlanError(
                 PlanErrorCode.START_AFTER_END,
                 Severity.ERROR,
@@ -54,8 +60,9 @@ export class HifzSystem {
             TrackId.HIFZ, // 👈 Enum Usage
             "حفظ جديد",
             startIdx,
-            amountLines,
-            endIdx
+            amount,
+            endIdx,
+            unit
         );
 
         manager.addTrack(track);

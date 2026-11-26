@@ -8,7 +8,7 @@ import {
 import { PlanBuilder } from '../../builders/PlanBuilder';
 import { TrackManager } from '../../core/TrackManager';
 import { WindowMode } from '../../core/constants';
-import { PlanError } from '../../errors';
+import { PlanError, PlanErrorCode, Severity } from '../../errors';
 import { PlanDay } from '../../core/types';
 import { QuranRepository } from '../../core/QuranRepository';
 
@@ -38,6 +38,7 @@ export class EngineFacade {
                 holidays: request.holidays,
                 includeHijri: request.includeHijri,
                 maxAyahPerDay: hifzConfig.maxAyahPerDay,
+                maxLinesPerDay: hifzConfig.maxLinesPerDay,
                 sequentialSurahMode: hifzConfig.sequentialSurahMode,
                 strictSequentialMode: hifzConfig.strictSequentialMode,
                 surahCompletion: hifzConfig.surahCompletion,
@@ -50,14 +51,38 @@ export class EngineFacade {
 
             // Map DTO tracks into the domain builder
             for (const track of request.tracks) {
+                if (track.amountUnit === 'AYAHS' && track.type !== 'HIFZ') {
+                    throw new PlanError(
+                        PlanErrorCode.INVALID_INPUT,
+                        Severity.ERROR,
+                        `وحدة AYAHS مدعومة فقط لمسار الحفظ الجديد (HIFZ)، ولا تدعم المسار ${track.type}.`,
+                        { trackType: track.type, amountUnit: track.amountUnit }
+                    );
+                }
+
                 switch(track.type) {
                     case 'HIFZ':
-                        if (!track.start) throw new Error("Hifz track requires start location.");
-                        builder.addHifz(
-                            track.amountUnit === 'PAGES' ? track.amountValue * 15 : track.amountValue,
-                            { surah: track.start.surah, ayah: track.start.ayah },
-                            track.end ? { surah: track.end.surah, ayah: track.end.ayah } : undefined
-                        );
+                        if (!track.start) {
+                            throw new PlanError(
+                                PlanErrorCode.INVALID_INPUT,
+                                Severity.ERROR,
+                                'مسار الحفظ (HIFZ) يتطلب تحديد موقع البداية (start).'
+                            );
+                        }
+                        if (track.amountUnit === 'AYAHS') {
+                            builder.addHifz(
+                                track.amountValue,
+                                { surah: track.start.surah, ayah: track.start.ayah },
+                                track.end ? { surah: track.end.surah, ayah: track.end.ayah } : undefined,
+                                { unit: 'AYAHS' }
+                            );
+                        } else {
+                            builder.addHifz(
+                                track.amountUnit === 'PAGES' ? track.amountValue * 15 : track.amountValue,
+                                { surah: track.start.surah, ayah: track.start.ayah },
+                                track.end ? { surah: track.end.surah, ayah: track.end.ayah } : undefined
+                            );
+                        }
                         break;
                     case 'MINOR_REVIEW':
                         builder.addMinorReview(
@@ -67,7 +92,7 @@ export class EngineFacade {
                         break;
                     case 'MAJOR_REVIEW':
                         builder.addMajorReview(
-                            track.amountValue,
+                            track.amountUnit === 'PAGES' ? track.amountValue * 15 : track.amountValue,
                             track.start ? { surah: track.start.surah, ayah: track.start.ayah } : undefined,
                             track.end ? { surah: track.end.surah, ayah: track.end.ayah } : undefined,
                             track.config?.horizonLines !== undefined ? { horizonLines: track.config.horizonLines } : undefined
@@ -109,10 +134,13 @@ export class EngineFacade {
                                 start: { surah: ev.data.start.surah, ayah: ev.data.start.ayah },
                                 end: { surah: ev.data.end.surah, ayah: ev.data.end.ayah },
                                 linesCount: ev.data.lines || 0,
+                                ayahsCount: ev.data.ayahsCount,
                                 appliedRules: ev.data.appliedRules ?? [],
-                                requestedLines: ev.data.requestedLines,
-                                overflowLines: ev.data.overflowLines,
-                                overflowReason: ev.data.overflowReason
+                                ...(ev.data.requestedLines !== undefined ? { requestedLines: ev.data.requestedLines } : {}),
+                                ...(ev.data.overflowLines !== undefined ? { overflowLines: ev.data.overflowLines } : {}),
+                                ...(ev.data.requestedAyahs !== undefined ? { requestedAyahs: ev.data.requestedAyahs } : {}),
+                                ...(ev.data.overflowAyahs !== undefined ? { overflowAyahs: ev.data.overflowAyahs } : {}),
+                                ...(ev.data.overflowReason !== undefined ? { overflowReason: ev.data.overflowReason } : {})
                             };
                         })
                     }))

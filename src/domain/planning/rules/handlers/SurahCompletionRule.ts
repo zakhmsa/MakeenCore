@@ -9,7 +9,8 @@ import { PlanningRule, RuleCandidate, RuleContext, RuleResult } from '../RuleInt
  * 
  * When enabled, the rule snaps to surah end if:
  * 1. We're in the middle of a surah
- * 2. The remaining ayahs are within reasonable threshold
+ * 2. The remaining portion is within the configured allowance
+ *    (measured in lines in LINES mode, or ayahs in AYAHS mode).
  */
 export class SurahCompletionRule implements PlanningRule {
     name = 'SurahCompletionRule';
@@ -22,30 +23,33 @@ export class SurahCompletionRule implements PlanningRule {
             return { approvedEnd: candidate.proposedEnd };
         }
 
-        // Skip if sequential mode not enabled
-        if (!context.sequentialSurahMode) {
+        // Skip if neither sequentialSurahMode nor strictSequentialMode is enabled
+        if (!context.sequentialSurahMode && !context.strictSequentialMode) {
             return { approvedEnd: candidate.proposedEnd };
         }
 
         const repo = context.repository;
         const currentEnd = candidate.proposedEnd;
+        const dirData = repo.getDirectionData(candidate.isReverse);
 
         // Check if we've crossed into a new surah
         if (currentEnd.surah !== candidate.start.surah) {
             // 🚫 STRICT MODE: Block ANY surah change until 100% complete
             if (context.strictSequentialMode) {
-                const prevSurahAyahCount = repo.getAyahCount(candidate.start.surah);
-                // Return to end of previous surah (forces completion on next day)
+                const startSurahEndAyah = candidate.isReverse
+                    ? 1
+                    : repo.getAyahCount(candidate.start.surah);
+                // Return to end of previous surah in traversal direction (forces completion on next day)
                 const forcedEnd = repo.getLocationFromIndex(
-                    repo.getIndexFromLocation(candidate.start.surah, prevSurahAyahCount, candidate.isReverse),
-                    repo.getDirectionData(candidate.isReverse).index_map
+                    repo.getIndexFromLocation(candidate.start.surah, startSurahEndAyah, candidate.isReverse),
+                    dirData.index_map
                 );
                 return {
                     approvedEnd: forcedEnd,
                     metadata: {
                         appliedRule: this.name,
                         reason: `STRICT MODE: Cannot start Surah ${currentEnd.surah} until Surah ${candidate.start.surah} is 100% complete`,
-                        adjustmentLines: repo.getLinesBetween(currentEnd, forcedEnd, candidate.isReverse)
+                        adjustmentLines: -repo.getLinesBetween(forcedEnd, currentEnd, candidate.isReverse)
                     }
                 };
             }
@@ -53,30 +57,45 @@ export class SurahCompletionRule implements PlanningRule {
             return { approvedEnd: currentEnd };
         }
 
-        // We're still in same surah - check if we should complete it
-        const ayahCount = repo.getAyahCount(currentEnd.surah);
-        
-        // If already at surah end, no action needed
-        if (currentEnd.ayah >= ayahCount) {
+        // Only attempt surah-completion expansion when sequentialSurahMode (surahCompletion.enabled) is true
+        if (!context.sequentialSurahMode) {
             return { approvedEnd: currentEnd };
         }
 
-        // Calculate remaining ayahs to surah end
-        const remainingAyahs = ayahCount - currentEnd.ayah;
-        
-        // Completion is governed by line capacity, never a raw ayah count.
+        // We're still in same surah - check if we should complete it in traversal direction
+        const targetSurahEndAyah = candidate.isReverse ? 1 : repo.getAyahCount(currentEnd.surah);
+        const currentEndIdx = repo.getIndexFromLocation(currentEnd.surah, currentEnd.ayah, candidate.isReverse);
+        const surahEndIdx = repo.getIndexFromLocation(currentEnd.surah, targetSurahEndAyah, candidate.isReverse);
+
+        // If already at surah end in traversal direction, no action needed
+        if (currentEndIdx >= surahEndIdx) {
+            return { approvedEnd: currentEnd };
+        }
+
+        const remainingAyahs = surahEndIdx - currentEndIdx;
+
         if (remainingAyahs > 0) {
-            const newEnd = { 
-                surah: currentEnd.surah, 
-                ayah: ayahCount, 
-                is_end: true 
-            };
+            const newEndLoc = repo.getLocationFromIndex(surahEndIdx, dirData.index_map);
 
-            const newEndLoc = repo.getLocationFromIndex(
-                repo.getIndexFromLocation(newEnd.surah, newEnd.ayah, candidate.isReverse),
-                repo.getDirectionData(candidate.isReverse).index_map
-            );
+            if (candidate.unit === 'AYAHS') {
+                // In AYAHS mode, surah completion is measured in extra ayahs (maxOverflowAyahs, default 2).
+                // maxOverflowLines is ignored in AYAHS mode.
+                const overflowAllowanceAyahs = Math.max(0, context.surahCompletionMaxOverflowAyahs ?? 2);
+                if (remainingAyahs <= overflowAllowanceAyahs) {
+                    return {
+                        approvedEnd: newEndLoc,
+                        metadata: {
+                            appliedRule: this.name,
+                            reason: `Completed Surah ${currentEnd.surah} within ${overflowAllowanceAyahs} optional overflow ayahs`,
+                            adjustmentLines: repo.getLinesBetween(currentEnd, newEndLoc, candidate.isReverse),
+                            grantsLineOverflow: true
+                        }
+                    };
+                }
+                return { approvedEnd: currentEnd };
+            }
 
+            // LINES mode: Completion is governed by line capacity.
             const completedLines = repo.getLinesBetween(candidate.start, newEndLoc, candidate.isReverse);
             const overflowAllowance = Math.max(0, context.surahCompletionMaxOverflowLines ?? 2);
             const maxPermittedLines = candidate.targetLines + overflowAllowance;

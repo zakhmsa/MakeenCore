@@ -13,6 +13,10 @@ export interface RuleCandidate {
     start: LocationObj;
     proposedEnd: LocationObj;
     targetLines: number;    // The original requested line count
+    /** Unit used for daily Hifz capacity ('LINES' | 'AYAHS'). Defaults to 'LINES'. */
+    unit?: 'LINES' | 'AYAHS';
+    /** Original requested ayah count when unit === 'AYAHS'. */
+    targetAyahs?: number;
     isReverse: boolean;     // Direction of memorization
     flags?: string[];       // Optional flags like 'review' to identify track type
     /** Raw whole-ayah boundary selected by the movement strategy. */
@@ -34,9 +38,12 @@ export interface RuleContext {
     snapThresholdLines: number;
     // Pedagogical constraints
     maxAyahPerDay?: number;
+    /** Optional hard line guard in AYAHS mode. */
+    maxLinesPerDay?: number;
     sequentialSurahMode?: boolean;
     strictSequentialMode?: boolean; // If true, never allow surah jumps until 100% complete
     surahCompletionMaxOverflowLines?: number;
+    surahCompletionMaxOverflowAyahs?: number;
     surahCompletionMayExceedMaxAyahs?: boolean;
 }
 

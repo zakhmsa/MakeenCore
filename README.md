@@ -7,7 +7,7 @@
 
 > Deterministic TypeScript scheduling engine for Quran memorization (Hifz) and review tracking.
 
-MakeenCore generates day-by-day study plans that balance **new memorization**, **minor review** (recent material), and **major review** (full-cycle review). Designed as a standalone library for integration into backend systems (NestJS, Express, etc.).
+MakeenCore generates day-by-day study plans that balance **new memorization**, **minor review** (recent material), and **major review** (full-cycle review). Designed as a standalone library for integration into backend systems (NestJS, Express, etc.) and client-side plan generators.
 
 ---
 
@@ -80,11 +80,86 @@ const days = manager.generatePlan();
 | Feature | Description |
 |---------|-------------|
 | **Multi-track scheduling** | Hifz (new), Minor Review (recent), Major Review (full cycle) |
-| **Canonical Quran indexing** | Directional prefix-sum calculations for any range |
-| **Pedagogical rules** | Ayah integrity, surah continuity, consolidation days |
-| **Explainable capacity** | Reports requested lines, actual lines, and overflow reason |
-| **Planning modes** | By duration ("finish in X days") or by daily amount ("Y lines/day") |
+| **Canonical Quran indexing** | Directional prefix-sum and whole-ayah index calculations for any range |
+| **Flexible Hifz units** | Plan new memorization by **lines/pages** (`LINES`/`PAGES`) or **whole ayahs** (`AYAHS`) |
+| **Pedagogical rules** | Ayah integrity, surah continuity, consolidation days, optional line guard |
+| **Explainable capacity** | Reports `ayahsCount`, `lines`, requested amount, overflow, and `overflowReason` |
+| **Planning modes** | By duration ("finish in X days") or by daily amount ("Y lines or ayahs/day") |
 | **Library-first design** | Pure TypeScript, no dependencies, deterministic output |
+
+---
+
+## Ayah-Count Daily Amount (`AYAHS` Mode)
+
+> **Important Note — Do NOT use the `dailyLines: 999` + `maxAyahPerDay: N` workaround:**  
+> When teachers assign by **number of ayahs per day** (e.g. "5 آيات يوميًا"), use the first-class `AYAHS` unit directly. Internally, MakeenCore already indexes the entire Mushaf as a canonical sequence of 6,236 whole ayahs (`0..6235`), so `AYAHS` mode advances directly by exact index (`startIdx + N - 1`), disables line-based soft snapping, and still populates exact `lines` and `ayahsCount` on every event.
+
+### 1. Builder API (`AYAHS`)
+
+```typescript
+import { PlanBuilder, WindowMode } from '@zakhm_sa/makeen-core';
+
+// Option A: Direct Hifz track by ayahs
+const plan = new PlanBuilder()
+    .setSchedule({
+        startDate: '2026-04-01',
+        daysPerWeek: 5,
+        isReverse: false,
+        surahCompletion: {
+            enabled: true,
+            maxOverflowAyahs: 2 // Finish surah if <= 2 ayahs remain (default: 2)
+        },
+        maxLinesPerDay: 15      // Optional line guard for very long ayahs
+    })
+    .addHifz(5, { surah: 2, ayah: 1 }, { surah: 2, ayah: 20 }, { unit: 'AYAHS' })
+    // Or: .addHifzByAyahs(5, { surah: 2, ayah: 1 }, { surah: 2, ayah: 20 })
+    // Or: .planByDailyAyahs({ from: { surah: 2, ayah: 1 }, to: { surah: 2, ayah: 20 }, dailyAyahs: 5 })
+    // Or: .planByDuration({ from: { surah: 2, ayah: 1 }, to: { surah: 2, ayah: 40 }, durationDays: 10, unit: 'AYAHS' })
+    .addMinorReview(3, WindowMode.GRADUAL)
+    .stopWhenCompleted()
+    .build()
+    .generatePlan();
+```
+
+### 2. DTO Facade (`amountUnit: 'AYAHS'`)
+
+```typescript
+import { MakeenEngine } from '@zakhm_sa/makeen-core';
+
+const result = MakeenEngine.generatePlan({
+    name: '5 Ayahs Per Day',
+    startDate: '2026-04-01',
+    direction: 'FORWARD',
+    daysPerWeek: 5,
+    tracks: [
+        {
+            type: 'HIFZ',
+            priority: 1,
+            amountUnit: 'AYAHS',
+            amountValue: 5,
+            start: { surah: 2, ayah: 1 },
+            end: { surah: 2, ayah: 20 },
+            config: {
+                surahCompletion: { enabled: true, maxOverflowAyahs: 2 },
+                maxLinesPerDay: 15
+            }
+        },
+        {
+            type: 'MINOR_REVIEW',
+            priority: 2,
+            amountUnit: 'LESSONS',
+            amountValue: 3
+        }
+    ]
+});
+```
+
+### `AYAHS` Mode Semantics & Rules
+
+- **Hifz only:** `AYAHS` is valid for `HIFZ` only. Minor review (`LESSONS` or `PAGES`) and major review (`LINES` or `PAGES`) stay lesson/line/page-based. Lesson-based minor review automatically reviews the last `K` completed Hifz lessons regardless of whether Hifz used `LINES` or `AYAHS`.
+- **Surah completion (`maxOverflowAyahs`):** When `surahCompletion.enabled` is true in `AYAHS` mode, if finishing the current surah requires `<= maxOverflowAyahs` extra ayahs (default `2`), they are included that day with `overflowReason: 'SURAH_COMPLETION'`. `maxOverflowLines` is ignored in `AYAHS` mode.
+- **`maxAyahPerDay` conflict rule:** In `AYAHS` mode, the daily ayah amount itself is the ayah cap. Do not set `maxAyahPerDay` smaller than `dailyAyahs` — doing so throws a `PlanError(INVALID_INPUT)`.
+- **Optional line guard (`maxLinesPerDay`):** If configured in `AYAHS` mode, caps the daily lesson at the last whole ayah that fits within `maxLinesPerDay` (always emitting at least **1 whole ayah**, even for a 15-line ayah like `2:282`) and records `'LINE_GUARD'` in `appliedRules`.
 
 ---
 
@@ -97,10 +172,12 @@ const days = manager.generatePlan();
     startDate: "2026-04-01",     // ISO date
     daysPerWeek: 5,              // 1-7
     isReverse: false,            // false = Al-Fatiha → An-Nas
-    maxAyahPerDay: 10,           // Hard cap (5-20)
+    maxAyahPerDay: 10,           // Hard cap in LINES mode (default: 10)
+    maxLinesPerDay: 15,          // Optional hard line guard in AYAHS mode
     surahCompletion: {           // Optional, capacity-aware surah completion
         enabled: true,
-        maxOverflowLines: 2,
+        maxOverflowLines: 2,     // LINES mode (default: 2)
+        maxOverflowAyahs: 2,     // AYAHS mode (default: 2)
         mayExceedMaxAyahs: false
     },
     strictSequentialMode: false, // Never switch until 100% done
@@ -116,8 +193,9 @@ const days = manager.generatePlan();
 | `startDate` | string | required | Plan start date (YYYY-MM-DD) |
 | `daysPerWeek` | number | required | Study days per week |
 | `isReverse` | boolean | false | Direction: true = An-Nas → Al-Fatiha |
-| `maxAyahPerDay` | number | 10 | Daily memorization cap |
-| `surahCompletion` | object | disabled | Complete a surah within an explicit line allowance |
+| `maxAyahPerDay` | number | 10 | Daily memorization ayah cap in `LINES` mode |
+| `maxLinesPerDay` | number | — | Optional line guard in `AYAHS` mode (min 1 ayah) |
+| `surahCompletion` | object | disabled | Complete a surah within an explicit line (`maxOverflowLines`) or ayah (`maxOverflowAyahs`) allowance |
 | `strictSequentialMode` | boolean | false | Never change surah until 100% |
 | `consolidationDayInterval` | number | disabled | Every Nth generated study day is review-only |
 | `surahBoundedMinorReview` | boolean | true | Minor review resets and stays in the active Hifz surah |
@@ -130,8 +208,8 @@ const days = manager.generatePlan();
 
 ### 1. Plan By Duration
 
-Provide: `from`, `to`, `durationDays`, `daysPerWeek`  
-Engine derives: `dailyLines`, `limitDays`
+Provide: `from`, `to`, `durationDays`, `daysPerWeek`, and optional `unit?: 'LINES' | 'AYAHS'` (default `'LINES'`).  
+Engine derives: daily lines or daily ayahs, plus `limitDays` (accessible via `builder.getDerivedDailyAmount()`).
 
 ```typescript
 const manager = new PlanBuilder()
@@ -154,8 +232,8 @@ const manager = new PlanBuilder()
 
 ### 2. Plan By Daily Amount
 
-Provide: `from`, `to`, `dailyLines`, `daysPerWeek`  
-Engine derives: the required generated study-day horizon using line, ayah, and consolidation constraints
+Provide: `from`, `to`, and `dailyLines` (or `dailyAyahs`), `daysPerWeek`  
+Engine derives: the required generated study-day horizon using line/ayah and consolidation constraints.
 
 ```typescript
 const manager = new PlanBuilder()
@@ -247,7 +325,7 @@ The engine returns daily plan entries with event categories:
 | `MEMORIZATION` | New material to memorize |
 | `REVIEW` | Scheduled review events |
 
-Off days and consolidation days may have no memorization event. Hifz events also report `requestedLines`, `overflowLines`, and `overflowReason`.
+Every event reports both `lines` (`linesCount` in DTO) and `ayahsCount`. Hifz events also report `requestedLines`/`overflowLines` (in `LINES` mode) or `requestedAyahs`/`overflowAyahs` (in `AYAHS` mode) and `overflowReason`.
 
 ```typescript
 if (result.success) {
@@ -264,6 +342,7 @@ if (result.success) {
 |----------|---------|
 | [AI usage contract](llms.txt) | Compact source of truth for LLMs and coding agents |
 | [User Guide](USER_GUIDE.md) | Current track behavior and examples |
+| [Changelog](CHANGELOG.md) | Release history and new capabilities |
 | [API Contracts](doc/planning-engine/planning-engine-api-contracts.md) | TypeScript integration contracts |
 | [Pedagogical Rules Guide](doc/planning-engine/pedagogical-rules-guide.md) | Rule behavior and configuration |
 | [Planning Modes & Phases](doc/planning-engine/planning-modes-and-phases.md) | Execution phases, QA scenarios, milestones, and current limitations |
@@ -280,7 +359,7 @@ npm install
 npm test
 ```
 
-**Total automated tests:** 73/73 passing, plus 10/10 scenario validations.
+**Total automated tests:** 88/88 passing, plus 10/10 scenario validations.
 
 ---
 

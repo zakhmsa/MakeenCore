@@ -251,4 +251,99 @@ export class QuranRepository {
 
         return parseFloat(Math.abs(endCum - startCum).toFixed(2));
     }
+
+    /**
+     * Resolves direction parameter into a boolean `isReverse` flag.
+     */
+    private resolveDirection(
+        direction: boolean | 'FORWARD' | 'REVERSE' | 'auto' = 'auto',
+        from?: { surah: number, ayah: number },
+        to?: { surah: number, ayah: number }
+    ): boolean {
+        if (direction === 'REVERSE' || direction === true) return true;
+        if (direction === 'FORWARD' || direction === false) return false;
+        if (from && to) {
+            const fwdMap = this.data.forward.index_map;
+            const idxFrom = fwdMap[`${from.surah}:${from.ayah}`] ?? -1;
+            const idxTo = fwdMap[`${to.surah}:${to.ayah}`] ?? -1;
+            return idxFrom > idxTo;
+        }
+        return false;
+    }
+
+    /**
+     * Counts whole ayahs between `start` and `end` (inclusive) in the specified direction.
+     * Throws PlanError(START_AFTER_END) when direction is explicit and `end` comes before `start`.
+     * @complexity O(1)
+     */
+    public countAyahs(
+        start: { surah: number, ayah: number },
+        end: { surah: number, ayah: number },
+        direction: boolean | 'FORWARD' | 'REVERSE' | 'auto' = 'auto'
+    ): number {
+        const isReverse = this.resolveDirection(direction, start, end);
+        const startIdx = this.getIndexFromLocation(start.surah, start.ayah, isReverse);
+        const endIdx = this.getIndexFromLocation(end.surah, end.ayah, isReverse);
+
+        if (direction !== 'auto' && startIdx > endIdx) {
+            throw new PlanError(
+                PlanErrorCode.START_AFTER_END,
+                Severity.ERROR,
+                `موقع البداية (${startIdx}) بعد موقع النهاية (${endIdx}).`,
+                { start, end, startIdx, endIdx, isReverse }
+            );
+        }
+
+        return Math.abs(endIdx - startIdx) + 1;
+    }
+
+    /**
+     * Finds the inclusive end location of a lesson taking `n` whole ayahs starting from `location`
+     * in the specified direction (`startIdx + n - 1`), clamped to `bound` (if provided) and the
+     * end of the mushaf.
+     *
+     * @param location  - Starting ayah location
+     * @param n         - Number of whole ayahs to take (must be a positive integer >= 1)
+     * @param direction - Traversal direction (`false` / `'FORWARD'`, `true` / `'REVERSE'`)
+     * @param bound     - Optional range boundary location not to cross
+     * @returns The inclusive end LocationObj of the `n`-ayah range
+     * @complexity O(1)
+     */
+    public advanceByAyahs(
+        location: { surah: number, ayah: number },
+        n: number,
+        direction: boolean | 'FORWARD' | 'REVERSE' = false,
+        bound?: { surah: number, ayah: number }
+    ): LocationObj {
+        if (!Number.isInteger(n) || n <= 0) {
+            throw new PlanError(
+                PlanErrorCode.INVALID_INPUT,
+                Severity.ERROR,
+                'عدد الآيات يجب أن يكون عدداً صحيحاً أكبر من صفر.',
+                { n }
+            );
+        }
+
+        const isReverse = direction === 'REVERSE' || direction === true;
+        const dirData = this.getDirectionData(isReverse);
+        const startIdx = this.getIndexFromLocation(location.surah, location.ayah, isReverse);
+        const maxIndex = dirData.cumulative_array.length - 1;
+
+        let effectiveBound = maxIndex;
+        if (bound) {
+            const boundIdx = this.getIndexFromLocation(bound.surah, bound.ayah, isReverse);
+            if (boundIdx < startIdx) {
+                throw new PlanError(
+                    PlanErrorCode.START_AFTER_END,
+                    Severity.ERROR,
+                    `موقع البداية (${startIdx}) بعد موقع النهاية (${boundIdx}).`,
+                    { location, bound, startIdx, endIdx: boundIdx, isReverse }
+                );
+            }
+            effectiveBound = Math.min(effectiveBound, boundIdx);
+        }
+
+        const targetIdx = Math.min(startIdx + n - 1, effectiveBound);
+        return this.getLocationFromIndex(targetIdx, dirData.index_map);
+    }
 }

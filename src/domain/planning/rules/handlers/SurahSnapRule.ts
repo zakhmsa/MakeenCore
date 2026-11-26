@@ -6,6 +6,10 @@ export class SurahSnapRule implements PlanningRule {
     scope = 'memorization' as const;
 
     apply(candidate: RuleCandidate, context: RuleContext): RuleResult {
+        if (candidate.unit === 'AYAHS') {
+            return { approvedEnd: candidate.proposedEnd };
+        }
+
         const repo = context.repository;
         const currentEnd = candidate.proposedEnd;
 

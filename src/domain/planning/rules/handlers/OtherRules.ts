@@ -6,8 +6,8 @@ export class ThematicHaltingRule implements PlanningRule {
     scope = 'memorization' as const;
 
     apply(candidate: RuleCandidate, context: RuleContext): RuleResult {
-        // Skip for review tracks - preserve full lesson boundaries
-        if (candidate.flags?.includes('review')) {
+        // Skip for review tracks or AYAHS mode
+        if (candidate.flags?.includes('review') || candidate.unit === 'AYAHS') {
             return { approvedEnd: candidate.proposedEnd };
         }
 
@@ -68,8 +68,8 @@ export class BalanceCorrectionRule implements PlanningRule {
     scope = 'memorization' as const;
 
     apply(candidate: RuleCandidate, context: RuleContext): RuleResult {
-        // Skip correction for review steps - they use lesson boundaries, not line targets
-        if (candidate.flags?.includes('review')) {
+        // Skip correction for review steps or AYAHS mode - they use lesson/ayah boundaries, not line targets
+        if (candidate.flags?.includes('review') || candidate.unit === 'AYAHS') {
             return { approvedEnd: candidate.proposedEnd };
         }
 

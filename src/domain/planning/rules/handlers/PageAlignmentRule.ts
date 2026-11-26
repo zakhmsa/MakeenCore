@@ -11,8 +11,8 @@ export class PageAlignmentRule implements PlanningRule {
     scope = 'memorization' as const;
 
     apply(candidate: RuleCandidate, context: RuleContext): RuleResult {
-        // Skip for review tracks - preserve full lesson boundaries
-        if (candidate.flags?.includes('review')) {
+        // Skip for review tracks or AYAHS mode (exact ayah counts are not line-snapped)
+        if (candidate.flags?.includes('review') || candidate.unit === 'AYAHS') {
             return { approvedEnd: candidate.proposedEnd };
         }
 

@@ -55,6 +55,10 @@ export interface StepResult {
     linesProcessed: number;
     /** Configured daily line capacity before whole-ayah rounding. */
     requestedLines?: number;
+    /** Configured daily ayah capacity (AYAHS mode). */
+    requestedAyahs?: number;
+    /** Unit used for daily Hifz movement ('LINES' | 'AYAHS'). */
+    unit?: 'LINES' | 'AYAHS';
     flags?: string[];
     appliedRules?: string[];  // Epic 2: track applied rules
     snapReason?: string;      // Epic 2: reason for adjustment
@@ -75,8 +79,14 @@ export interface PlanEvent {
         start: LocationObj;
         end: LocationObj;
         lines?: number;
+        /** Count of whole ayahs from start to end inclusive. */
+        ayahsCount?: number;
         requestedLines?: number;
         overflowLines?: number;
+        /** Configured daily ayah target (present in AYAHS mode). */
+        requestedAyahs?: number;
+        /** Extra ayahs beyond requestedAyahs (present in AYAHS mode, e.g. from SURAH_COMPLETION). */
+        overflowAyahs?: number;
         overflowReason?: 'AYAH_INTEGRITY' | 'SURAH_COMPLETION';
         appliedRules?: string[];
         is_reset?: boolean;     // For looping tracks

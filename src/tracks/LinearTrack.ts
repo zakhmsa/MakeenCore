@@ -1,25 +1,27 @@
 import { BaseTrack } from './BaseTrack';
 import { LinearStrategy } from '../strategies/LinearStrategy';
+import { HifzAmountUnit } from '../builders/PlanTypes';
 
 /**
  * LinearTrack
  * Represents a standard memorization path (Point A to Point B).
- * 🚀 UPDATE: Now accepts an optional 'endIdx'.
+ * 🚀 UPDATE: Now accepts an optional 'endIdx' and 'unit' ('LINES' | 'AYAHS').
  */
 export class LinearTrack extends BaseTrack {
     constructor(
         id: number, 
         name: string, 
         startIdx: number, 
-        amountLines: number,
-        endIdx?: number // 🚀 Optional End Boundary
+        amount: number,
+        endIdx?: number, // 🚀 Optional End Boundary
+        unit: HifzAmountUnit = 'LINES'
     ) {
         super(
             id, 
             name, 
             'linear', 
             new LinearStrategy(), 
-            { amount: amountLines, endIdx }, // Pass to Strategy Config
+            { amount, endIdx, unit }, // Pass to Strategy Config
             startIdx
         );
     }

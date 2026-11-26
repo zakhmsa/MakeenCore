@@ -185,6 +185,85 @@ export class QuranRepositoryOptimized {
     }
 
     /**
+     * Counts whole ayahs between `start` and `end` (inclusive) in the specified direction.
+     * @complexity O(1)
+     */
+    public countAyahs(
+        start: { surah: number, ayah: number },
+        end: { surah: number, ayah: number },
+        direction: boolean | 'FORWARD' | 'REVERSE' | 'auto' = 'auto'
+    ): number {
+        this.ensureDataLoaded();
+        let isReverse: boolean;
+        if (direction === 'REVERSE' || direction === true) {
+            isReverse = true;
+        } else if (direction === 'FORWARD' || direction === false) {
+            isReverse = false;
+        } else {
+            const fwdMap = this.binaryData.getForwardIndex();
+            const idxFrom = fwdMap.get(`${start.surah}:${start.ayah}`) ?? -1;
+            const idxTo = fwdMap.get(`${end.surah}:${end.ayah}`) ?? -1;
+            isReverse = idxFrom > idxTo;
+        }
+
+        const startIdx = this.getIndexFromLocation(start.surah, start.ayah, isReverse);
+        const endIdx = this.getIndexFromLocation(end.surah, end.ayah, isReverse);
+
+        if (direction !== 'auto' && startIdx > endIdx) {
+            throw new PlanError(
+                PlanErrorCode.START_AFTER_END,
+                Severity.ERROR,
+                `Start location (${startIdx}) is after end location (${endIdx}).`,
+                { start, end, startIdx, endIdx, isReverse }
+            );
+        }
+
+        return Math.abs(endIdx - startIdx) + 1;
+    }
+
+    /**
+     * Finds the inclusive end location of a lesson taking `n` whole ayahs starting from `location`.
+     * @complexity O(1)
+     */
+    public advanceByAyahs(
+        location: { surah: number, ayah: number },
+        n: number,
+        direction: boolean | 'FORWARD' | 'REVERSE' = false,
+        bound?: { surah: number, ayah: number }
+    ): LocationObj {
+        if (!Number.isInteger(n) || n <= 0) {
+            throw new PlanError(
+                PlanErrorCode.INVALID_INPUT,
+                Severity.ERROR,
+                'Ayah count must be a positive integer.',
+                { n }
+            );
+        }
+
+        const isReverse = direction === 'REVERSE' || direction === true;
+        const dirData = this.getDirectionData(isReverse);
+        const startIdx = this.getIndexFromLocation(location.surah, location.ayah, isReverse);
+        const maxIndex = dirData.cumulative_array.length - 1;
+
+        let effectiveBound = maxIndex;
+        if (bound) {
+            const boundIdx = this.getIndexFromLocation(bound.surah, bound.ayah, isReverse);
+            if (boundIdx < startIdx) {
+                throw new PlanError(
+                    PlanErrorCode.START_AFTER_END,
+                    Severity.ERROR,
+                    `Start location (${startIdx}) is after bound location (${boundIdx}).`,
+                    { location, bound, startIdx, endIdx: boundIdx, isReverse }
+                );
+            }
+            effectiveBound = Math.min(effectiveBound, boundIdx);
+        }
+
+        const targetIdx = Math.min(startIdx + n - 1, effectiveBound);
+        return this.getLocationFromIndex(targetIdx, dirData.index_map);
+    }
+
+    /**
      * Memory management for npm deployment
      */
     public getMemoryUsage(): number {

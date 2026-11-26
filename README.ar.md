@@ -7,7 +7,7 @@
 
 > محرك تخطيط قطعي مكتوب بلغة TypeScript لتوليد خطط حفظ ومراجعة القرآن الكريم.
 
-يُنتج MakeenCore خططاً يومية توازن بين **الحفظ الجديد**، **المراجعة الصغرى** (المواد الحديثة)، و**المراجعة الكبرى** (مراجعة الدورة الكاملة). مصمم كمكتبة مستقلة للدمج في الأنظمة الخلفية (NestJS, Express, إلخ).
+يُنتج MakeenCore خططاً يومية توازن بين **الحفظ الجديد**، **المراجعة الصغرى** (المواد الحديثة)، و**المراجعة الكبرى** (مراجعة الدورة الكاملة). مصمم كمكتبة مستقلة للدمج في الأنظمة الخلفية (NestJS, Express, إلخ) أو مولدات الخطط في الواجهة الأمامية.
 
 ---
 
@@ -80,11 +80,85 @@ const days = manager.generatePlan();
 | الميزة | الوصف |
 |--------|-------|
 | **جدولة متعددة المسارات** | حفظ (جديد)، مراجعة صغرى (حديث)، مراجعة كبرى (دورة كاملة) |
-| **فهرسة قرآنية دقيقة** | حسابات التجمع التراكمي (prefix-sum) لأي مدى |
-| **قواعد تربوية** | سلامة الآيات، استمرارية السور، أيام التقوية |
-| **سعة قابلة للتفسير** | إظهار الأسطر المطلوبة والفعلية وسبب التجاوز |
-| **أوضاع التخطيط** | بالمدة ("أنهِ في X يوماً") أو بالمقدار اليومي ("Y سطر/يوم") |
+| **فهرسة قرآنية دقيقة** | حسابات التجمع التراكمي للأسطر والفهرسة المباشرة للآيات (6236 آية) |
+| **وحدات حفظ مرنة** | التخطيط بالأسطر/الصفحات (`LINES`/`PAGES`) أو بعدد الآيات مباشرة (`AYAHS`) |
+| **قواعد تربوية** | سلامة الآيات، استمرارية السور، أيام التقوية، وحارس الأسطر الاختياري |
+| **سعة قابلة للتفسير** | إظهار `ayahsCount` و`lines` والمقدار المطلوب والتجاوز وسببه |
+| **أوضاع التخطيط** | بالمدة ("أنهِ في X يوماً") أو بالمقدار اليومي ("Y سطر أو آية/يوم") |
 | **تصميم مكتبة أولاً** | TypeScript نقية، بدون تبعيات، مخرجات قطعية |
+
+---
+
+## التخطيط بعدد الآيات يوميًا (`AYAHS` Mode)
+
+> **تنبيه مهم — لا تستخدم الحيلة القديمة (`dailyLines: 999` مع `maxAyahPerDay: N`):**  
+> عندما يحدد المعلم الورد اليومي **بعدد الآيات** (مثل "5 آيات يوميًا" للأطفال أو في السور ذات الآيات الطويلة)، استخدم الوحدة الرسمية `AYAHS` مباشرةً. محرك MakeenCore مفهرس داخليًا على مستوى الآيات الكاملة (`0..6235`)، لذا فإن وضع `AYAHS` يتحرك مباشرةً بعدد الآيات المطلوب (`startIdx + N - 1`) دون تشغيل قواعد تقريب الأسطر، مع الاستمرار في إرجاع `lines` و`ayahsCount` بدقة في كل حدث.
+
+### 1. عبر واجهة `PlanBuilder`
+
+```typescript
+import { PlanBuilder, WindowMode } from '@zakhm_sa/makeen-core';
+
+const plan = new PlanBuilder()
+    .setSchedule({
+        startDate: '2026-04-01',
+        daysPerWeek: 5,
+        isReverse: false,
+        surahCompletion: {
+            enabled: true,
+            maxOverflowAyahs: 2 // إكمال السورة في نفس اليوم إذا بقي <= 2 آية (الافتراضي: 2)
+        },
+        maxLinesPerDay: 15      // اختياري: سقف أسطر لحماية الدرس عند تتابع آيات طويلة جدًا
+    })
+    .addHifz(5, { surah: 2, ayah: 1 }, { surah: 2, ayah: 20 }, { unit: 'AYAHS' })
+    // أو: .addHifzByAyahs(5, { surah: 2, ayah: 1 }, { surah: 2, ayah: 20 })
+    // أو: .planByDailyAyahs({ from: { surah: 2, ayah: 1 }, to: { surah: 2, ayah: 20 }, dailyAyahs: 5 })
+    // أو: .planByDuration({ from: { surah: 2, ayah: 1 }, to: { surah: 2, ayah: 40 }, durationDays: 10, unit: 'AYAHS' })
+    .addMinorReview(3, WindowMode.GRADUAL)
+    .stopWhenCompleted()
+    .build()
+    .generatePlan();
+```
+
+### 2. عبر واجهة `MakeenEngine` (DTO)
+
+```typescript
+import { MakeenEngine } from '@zakhm_sa/makeen-core';
+
+const result = MakeenEngine.generatePlan({
+    name: '5 آيات يوميًا',
+    startDate: '2026-04-01',
+    direction: 'FORWARD',
+    daysPerWeek: 5,
+    tracks: [
+        {
+            type: 'HIFZ',
+            priority: 1,
+            amountUnit: 'AYAHS',
+            amountValue: 5,
+            start: { surah: 2, ayah: 1 },
+            end: { surah: 2, ayah: 20 },
+            config: {
+                surahCompletion: { enabled: true, maxOverflowAyahs: 2 },
+                maxLinesPerDay: 15
+            }
+        },
+        {
+            type: 'MINOR_REVIEW',
+            priority: 2,
+            amountUnit: 'LESSONS',
+            amountValue: 3
+        }
+    ]
+});
+```
+
+### قواعد وسلوك وضع `AYAHS`
+
+- **خاص بمسار الحفظ الجديد (`HIFZ`) فقط:** تبقى المراجعة الصغرى (`LESSONS` أو `PAGES`) والمراجعة الكبرى (`LINES` أو `PAGES`) كما هي؛ وعند اختيار `LESSONS` للمراجعة الصغرى فإنها تراجع آخر `K` دروس حفظ مكتملة بغض النظر عن وحدة الحفظ.
+- **إكمال السورة (`maxOverflowAyahs`):** عند تفعيل `surahCompletion.enabled` في وضع `AYAHS`، يُقاس المتبقي من السورة بعدد الآيات (`maxOverflowAyahs` وافتراضيه `2`) ويُسجل السبب `SURAH_COMPLETION`، بينما يُتجاهل `maxOverflowLines`.
+- **عدم الحاجة لـ `maxAyahPerDay`:** في وضع `AYAHS` الرقم اليومي نفسه هو سقف الآيات. تمرير `maxAyahPerDay` بقيمة أصغر من عدد الآيات اليومي يرمي خطأ إعدادات واضحًا `PlanError(INVALID_INPUT)`.
+- **حارس الأسطر الاختياري (`maxLinesPerDay`):** خيار إضافي في وضع `AYAHS` فقط لوضع سقف بالأسطر حتى لا تتجمع عدة آيات طويلة جدًا في يوم واحد؛ يقف الدرس عند آخر آية كاملة تناسب السقف (بحد أدنى **آية واحدة كاملة** حتى لو كانت آية الدَّين `2:282` ذات الـ 15 سطرًا) ويسجل `'LINE_GUARD'` في `appliedRules`.
 
 ---
 
@@ -97,10 +171,12 @@ const days = manager.generatePlan();
     startDate: "2026-04-01",      // تاريخ ISO
     daysPerWeek: 5,                // 1-7
     isReverse: false,              // false = الفاتحة → الناس
-    maxAyahPerDay: 10,             // الحد الأقصى (5-20)
-    surahCompletion: {             // إكمال اختياري ضمن سماح واضح بالأسطر
+    maxAyahPerDay: 10,             // الحد الأقصى للآيات في وضع LINES (الافتراضي: 10)
+    maxLinesPerDay: 15,            // اختياري: حارس الأسطر الأقصى في وضع AYAHS
+    surahCompletion: {             // إكمال اختياري ضمن سماح واضح بالأسطر أو الآيات
         enabled: true,
-        maxOverflowLines: 2,
+        maxOverflowLines: 2,       // في وضع LINES (الافتراضي: 2)
+        maxOverflowAyahs: 2,       // في وضع AYAHS (الافتراضي: 2)
         mayExceedMaxAyahs: false
     },
     strictSequentialMode: false,   // عدم الانتقال حتى 100% إكمال
@@ -116,8 +192,9 @@ const days = manager.generatePlan();
 | `startDate` | string | مطلوب | تاريخ بدء الخطة (YYYY-MM-DD) |
 | `daysPerWeek` | number | مطلوب | أيام الدراسة في الأسبوع |
 | `isReverse` | boolean | false | الاتجاه: true = الناس → الفاتحة |
-| `maxAyahPerDay` | number | 10 | الحد الأقصى للحفظ اليومي |
-| `surahCompletion` | object | معطل | إكمال السورة ضمن سماح يحدده المعلم بالأسطر |
+| `maxAyahPerDay` | number | 10 | الحد الأقصى لآيات الحفظ اليومي في وضع `LINES` |
+| `maxLinesPerDay` | number | — | حارس أسطر اختياري في وضع `AYAHS` (بحد أدنى آية واحدة) |
+| `surahCompletion` | object | معطل | إكمال السورة ضمن سماح بالأسطر (`maxOverflowLines`) أو الآيات (`maxOverflowAyahs`) |
 | `strictSequentialMode` | boolean | false | عدم تغيير السورة حتى 100% إكمال |
 | `consolidationDayInterval` | number | معطل | كل يوم دراسة مولّد رقم N يكون للمراجعة فقط |
 | `surahBoundedMinorReview` | boolean | true | تصفير المراجعة الصغرى وحصرها في سورة الحفظ الحالية |
@@ -130,8 +207,8 @@ const days = manager.generatePlan();
 
 ### 1. التخطيط بالمدة
 
-تُقدم: `from`، `to`، `durationDays`، `daysPerWeek`  
-المحرك يُنتج: `dailyLines`، `limitDays`
+تُقدم: `from`، `to`، `durationDays`، `daysPerWeek`، واختياريًا `unit?: 'LINES' | 'AYAHS'` (الافتراضي `'LINES'`)  
+المحرك يُنتج: المقدار اليومي بالأسطر أو الآيات (`getDerivedDailyAmount()`)، و`limitDays`
 
 ```typescript
 const manager = new PlanBuilder()
@@ -154,8 +231,8 @@ const manager = new PlanBuilder()
 
 ### 2. التخطيط بالمقدار اليومي
 
-تُقدم: `from`، `to`، `dailyLines`، `daysPerWeek`  
-المحرك يُنتج: أفق أيام الدراسة اعتمادًا على حدّي الأسطر والآيات وأيام التجميع
+تُقدم: `from`، `to`، و`dailyLines` (أو `dailyAyahs`)، `daysPerWeek`  
+المحرك يُنتج: أفق أيام الدراسة اعتمادًا على حدّي الأسطر/الآيات وأيام التجميع
 
 ```typescript
 const manager = new PlanBuilder()
@@ -247,7 +324,7 @@ new PlanBuilder()
 | `MEMORIZATION` | المادة الجديدة للحفظ |
 | `REVIEW` | أحداث المراجعة المجدولة |
 
-قد تخلو أيام الإجازة أو التجميع من حدث حفظ. وتعرض أحداث الحفظ أيضًا `requestedLines` و`overflowLines` و`overflowReason`.
+يعرض كل حدث كلاً من `lines` (`linesCount` في DTO) و`ayahsCount` (عدد الآيات الكاملة). كما تعرض أحداث الحفظ `requestedLines`/`overflowLines` (في وضع الأسطر) أو `requestedAyahs`/`overflowAyahs` (في وضع الآيات) مع `overflowReason`.
 
 ```typescript
 if (result.success) {
@@ -264,6 +341,7 @@ if (result.success) {
 |---------|-------|
 | [عقد الاستخدام للذكاء الاصطناعي](llms.txt) | مصدر حقيقة مختصر للنماذج والوكلاء |
 | [دليل المستخدم](USER_GUIDE.md) | السلوك الحالي للمسارات والأمثلة |
+| [سجل التغييرات](CHANGELOG.md) | تاريخ الإصدارات والميزات الجديدة |
 | [عقود الربط البرمجي](doc/planning-engine/planning-engine-api-contracts.md) | عقود التكامل مع TypeScript |
 | [دليل القواعد التربوية](doc/planning-engine/pedagogical-rules-guide.md) | سلوك القواعد والإعدادات |
 | [أوضاع التخطيط والمراحل](doc/planning-engine/planning-modes-and-phases.md) | مراحل التنفيذ وسيناريوهات QA والمعالم والقيود الحالية |
@@ -280,7 +358,7 @@ npm install
 npm test
 ```
 
-**إجمالي الاختبارات الآلية:** 73/73 ناجحة، إضافة إلى 10/10 سيناريوهات تحقق.
+**إجمالي الاختبارات الآلية:** 88/88 ناجحة، إضافة إلى 10/10 سيناريوهات تحقق.
 
 ---
 

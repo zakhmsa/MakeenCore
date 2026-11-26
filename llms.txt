@@ -8,7 +8,7 @@ Use the npm package `@zakhm_sa/makeen-core`. This file is the compact, AI-orient
 
 - `MakeenEngine`: DTO-oriented facade. Best for ordinary application integrations.
 - `PlanBuilder`: fluent API. Best for advanced Hifz, minor review, multiple independent review cycles, snapshots, and manual plan horizons.
-- `QuranRepository`: canonical location, line, page, and direction queries.
+- `QuranRepository`: canonical location, line, ayah-count (`countAyahs`, `advanceByAyahs`), page, and direction queries.
 - `WindowMode`: `GRADUAL` or `FIXED` minor-review behavior.
 - `HijriDateUtils`: display-only Umm al-Qura formatting.
 - Public DTOs, builder types, plan types, and errors are exported from the package root.
@@ -19,7 +19,7 @@ Use the npm package `@zakhm_sa/makeen-core`. This file is the compact, AI-orient
 npm install @zakhm_sa/makeen-core
 ```
 
-## Recommended Builder example
+## Recommended Builder example (`LINES` mode)
 
 ```ts
 import { PlanBuilder, WindowMode } from '@zakhm_sa/makeen-core';
@@ -53,33 +53,94 @@ const manager = new PlanBuilder()
 const days = manager.generatePlan();
 ```
 
-## Daily-line semantics
+## Ayah-count daily amount (`AYAHS` mode)
+
+When assigning new memorization by **number of ayahs per day** ("5 آيات يوميًا"), use the first-class `AYAHS` unit. Never use the hack of setting a huge `dailyLines` with `maxAyahPerDay: N`.
+
+### Builder (`AYAHS`)
+
+```ts
+const manager = new PlanBuilder()
+  .setSchedule({
+    startDate: '2026-04-01',
+    daysPerWeek: 5,
+    isReverse: false,
+    surahCompletion: { enabled: true, maxOverflowAyahs: 2 },
+    maxLinesPerDay: 15 // optional line guard in AYAHS mode
+  })
+  .addHifz(5, { surah: 2, ayah: 1 }, { surah: 2, ayah: 20 }, { unit: 'AYAHS' })
+  // Or: .addHifzByAyahs(5, { surah: 2, ayah: 1 }, { surah: 2, ayah: 20 })
+  // Or: .planByDailyAyahs({ from: { surah: 2, ayah: 1 }, to: { surah: 2, ayah: 20 }, dailyAyahs: 5 })
+  // Or: .planByDuration({ from: { surah: 2, ayah: 1 }, to: { surah: 2, ayah: 40 }, durationDays: 10, unit: 'AYAHS' })
+  .addMinorReview(3, WindowMode.GRADUAL)
+  .stopWhenCompleted()
+  .build();
+```
+
+### DTO (`amountUnit: 'AYAHS'`)
+
+```ts
+const result = MakeenEngine.generatePlan({
+  name: '5 Ayahs Plan',
+  startDate: '2026-04-01',
+  direction: 'FORWARD',
+  daysPerWeek: 5,
+  tracks: [
+    {
+      type: 'HIFZ',
+      priority: 1,
+      amountUnit: 'AYAHS',
+      amountValue: 5,
+      start: { surah: 2, ayah: 1 },
+      end: { surah: 2, ayah: 20 },
+      config: {
+        surahCompletion: { enabled: true, maxOverflowAyahs: 2 },
+        maxLinesPerDay: 15
+      }
+    }
+  ]
+});
+```
+
+### `AYAHS` semantics
+
+- Valid on `HIFZ` only. Passing `amountUnit: 'AYAHS'` on `MINOR_REVIEW` or `MAJOR_REVIEW` is rejected with `PlanError(INVALID_INPUT)`.
+- Takes `N` whole ayahs per lesson in traversal order (`startIdx + N - 1`), clamped to `to`.
+- Line-based soft snapping rules (`SurahSnapRule`, `PageAlignmentRule`, `ThematicHaltingRule`, `BalanceCorrectionRule`) do not run in `AYAHS` mode.
+- `surahCompletion.maxOverflowAyahs` (default `2`) finishes the current surah if `<= maxOverflowAyahs` ayahs remain and sets `overflowReason: 'SURAH_COMPLETION'`. `maxOverflowLines` is ignored in `AYAHS` mode.
+- In `AYAHS` mode the unit itself is the ayah cap. Setting `maxAyahPerDay < dailyAyahs` throws `PlanError(INVALID_INPUT)`.
+- `maxLinesPerDay` (optional, `AYAHS` mode only) caps the lesson at the last whole ayah fitting within `maxLinesPerDay` (minimum 1 ayah — never emits an empty lesson) and records `'LINE_GUARD'` in `appliedRules`.
+
+## Daily-line semantics (`LINES` mode)
 
 - `dailyLines` is the configured daily capacity for new memorization.
 - The engine always returns whole ayahs.
 - A lesson can exceed the capacity only because the final indivisible ayah crosses it, or because an explicitly enabled surah-completion allowance applies.
 - Soft surah, page, and thematic alignment cannot bypass final ayah and line constraints.
-- `maxAyahPerDay` is an additional hard cap. Short ayahs can therefore produce fewer lines than requested.
-- Output fields explain the result: `requestedLines`, `overflowLines`, and `overflowReason` (`AYAH_INTEGRITY` or `SURAH_COMPLETION`).
+- `maxAyahPerDay` is an additional hard cap in `LINES` mode. Short ayahs can therefore produce fewer lines than requested.
+- Output fields explain the result: `ayahsCount`, `requestedLines`, `overflowLines`, and `overflowReason` (`AYAH_INTEGRITY` or `SURAH_COMPLETION`).
 
 ## Surah completion
 
 ```ts
 surahCompletion: {
   enabled: true,
-  maxOverflowLines: 2,
+  maxOverflowLines: 2, // LINES mode (default: 2)
+  maxOverflowAyahs: 2, // AYAHS mode (default: 2)
   mayExceedMaxAyahs: false
 }
 ```
 
-- The allowance is measured in mushaf lines, not remaining ayah count.
+- In `LINES` mode, the allowance is measured in mushaf lines (`maxOverflowLines`).
+- In `AYAHS` mode, the allowance is measured in remaining whole ayahs (`maxOverflowAyahs`), and `maxOverflowLines` is ignored.
 - If the remaining surah portion is too large, it moves to the next memorization day.
-- `mayExceedMaxAyahs` must be explicitly enabled to override the ayah cap.
+- `mayExceedMaxAyahs` must be explicitly enabled to override the ayah cap in `LINES` mode.
 - Legacy `sequentialSurahMode` remains accepted for compatibility; prefer `surahCompletion` in new code.
 
 ## Minor review
 
 - Minor review is Hifz-history based and never includes today's lesson.
+- Works identically whether Hifz uses `LINES` or `AYAHS`.
 - It is surah-bounded by default: once Hifz actually starts a new surah, the prior-surah minor window is cleared.
 - Set `surahBoundedMinorReview: false` only for legacy cross-surah behavior.
 - `minorReviewPagesCount: N` means an exact target of `N * 15` mushaf lines, rounded only to preserve a whole boundary ayah.
@@ -137,7 +198,7 @@ const result = MakeenEngine.generatePlan({
 });
 ```
 
-For `HIFZ` and `MAJOR_REVIEW`, `amountUnit: 'PAGES'` is converted to 15 lines per page. A minor-review `PAGES` amount configures its recent-history window.
+For `HIFZ` and `MAJOR_REVIEW`, `amountUnit: 'PAGES'` is converted to 15 lines per page. For `HIFZ`, `amountUnit: 'AYAHS'` schedules exact whole-ayah counts per day. A minor-review `PAGES` amount configures its recent-history window.
 
 ## Direction and ranges
 
@@ -149,8 +210,10 @@ For `HIFZ` and `MAJOR_REVIEW`, `amountUnit: 'PAGES'` is converted to 15 lines pe
 ## Output interpretation
 
 - `PlanDay.events` contains `MEMORIZATION` and `REVIEW` events; off days can have no events.
-- `data.lines` / DTO `linesCount` is the actual canonical line amount.
-- `data.appliedRules` identifies rules that adjusted the boundary.
+- `data.lines` / DTO `linesCount` is the actual canonical line amount (always populated in all modes).
+- `data.ayahsCount` / DTO `ayahsCount` is the count of whole ayahs from `start` to `end` inclusive (always populated on every event).
+- `data.requestedAyahs` and `data.overflowAyahs` (and DTO equivalents) are populated on Hifz events in `AYAHS` mode.
+- `data.appliedRules` identifies rules that adjusted the boundary (including `'LINE_GUARD'` when `maxLinesPerDay` binds in `AYAHS` mode).
 - Major-review events can carry `is_reset` when a cycle wraps.
 - `hijriDate` is display-only and does not affect scheduling.
 
@@ -168,6 +231,7 @@ For `HIFZ` and `MAJOR_REVIEW`, `amountUnit: 'PAGES'` is converted to 15 lines pe
 - [README](./README.md): installation and common examples.
 - [Arabic README](./README.ar.md): Arabic quick start and configuration.
 - [User guide](./USER_GUIDE.md): track behavior and use-case guidance.
+- [Changelog](./CHANGELOG.md): release notes.
 - [Actual API contracts](./doc/planning-engine/planning-engine-api-contracts.md): public DTO and builder shapes.
 - [Pedagogical rules](./doc/planning-engine/pedagogical-rules-guide.md): rule scopes, limits, and examples.
 - [Planning modes and phases](./doc/planning-engine/planning-modes-and-phases.md): execution, scenario tooling, milestones, and limitations.
@@ -175,6 +239,7 @@ For `HIFZ` and `MAJOR_REVIEW`, `amountUnit: 'PAGES'` is converted to 15 lines pe
 
 ## Do not assume
 
+- Do not fake ayah-based Hifz with huge `dailyLines` + `maxAyahPerDay`; use `unit: 'AYAHS'` / `amountUnit: 'AYAHS'`.
 - Do not treat `dailyLines` as a desired average that soft rules may freely exceed.
 - Do not interpret `maxAyahPerDay` as a line limit.
 - Do not apply memorization alignment rules to review tracks.
